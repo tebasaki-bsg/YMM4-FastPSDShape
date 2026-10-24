@@ -1,0 +1,70 @@
+namespace FastPsd.Core.Psd;
+
+/// <summary>PSD のブレンドモード。PassThrough はフォルダ専用（通過）。</summary>
+public enum PsdBlendMode
+{
+    PassThrough,
+    Normal,
+    Dissolve,
+    Darken,
+    Multiply,
+    ColorBurn,
+    LinearBurn,
+    DarkerColor,
+    Lighten,
+    Screen,
+    ColorDodge,
+    LinearDodge,
+    LighterColor,
+    Overlay,
+    SoftLight,
+    HardLight,
+    VividLight,
+    LinearLight,
+    PinLight,
+    HardMix,
+    Difference,
+    Exclusion,
+    Subtract,
+    Divide,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+public static class PsdBlendModes
+{
+    public static PsdBlendMode FromKey(string key) => key switch
+    {
+        "pass" => PsdBlendMode.PassThrough,
+        "norm" => PsdBlendMode.Normal,
+        "diss" => PsdBlendMode.Dissolve,
+        "dark" => PsdBlendMode.Darken,
+        "mul " => PsdBlendMode.Multiply,
+        "idiv" => PsdBlendMode.ColorBurn,
+        "lbrn" => PsdBlendMode.LinearBurn,
+        "dkCl" => PsdBlendMode.DarkerColor,
+        "lite" => PsdBlendMode.Lighten,
+        "scrn" => PsdBlendMode.Screen,
+        "div " => PsdBlendMode.ColorDodge,
+        "lddg" => PsdBlendMode.LinearDodge,
+        "lgCl" => PsdBlendMode.LighterColor,
+        "over" => PsdBlendMode.Overlay,
+        "sLit" => PsdBlendMode.SoftLight,
+        "hLit" => PsdBlendMode.HardLight,
+        "vLit" => PsdBlendMode.VividLight,
+        "lLit" => PsdBlendMode.LinearLight,
+        "pLit" => PsdBlendMode.PinLight,
+        "hMix" => PsdBlendMode.HardMix,
+        "diff" => PsdBlendMode.Difference,
+        "smud" => PsdBlendMode.Exclusion,
+        "fsub" => PsdBlendMode.Subtract,
+        "fdiv" => PsdBlendMode.Divide,
+        "hue " => PsdBlendMode.Hue,
+        "sat " => PsdBlendMode.Saturation,
+        "colr" => PsdBlendMode.Color,
+        "lum " => PsdBlendMode.Luminosity,
+        _ => PsdBlendMode.Normal,
+    };
+}

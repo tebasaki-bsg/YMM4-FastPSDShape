@@ -1,0 +1,13 @@
+# 改行コードは Git が自動でそろえる（リポジトリ内は LF、Windows で取り出すと CRLF）
+* text=auto
+
+# 配布物の README は CRLF のまま（YMM4 のインストーラーとメモ帳で表示するため）
+dist/README.txt text eol=crlf
+# Windows PowerShell 用のスクリプト
+*.ps1 text eol=crlf
+
+# バイナリ
+*.psd binary
+*.png binary
+*.dll binary
+*.ymme binary

@@ -1,0 +1,6 @@
+<Project>
+  <!-- このファイルを Directory.Build.props という名前でコピーし、YMM4 のフォルダ（末尾の \ を忘れずに）に書き換えてください -->
+  <PropertyGroup>
+    <YMM4DirPath>C:\Users\OWNER\Documents\YMM4Lite\</YMM4DirPath>
+  </PropertyGroup>
+</Project>

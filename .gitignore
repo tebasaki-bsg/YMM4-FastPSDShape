@@ -1,0 +1,11 @@
+# ビルドで作られるもの
+bin/
+obj/
+artifacts/
+
+# Visual Studio などの個人設定
+.vs/
+*.user
+
+# 各自のパソコンの YMM4 の場所（Directory.Build.props.sample をコピーして作る）
+Directory.Build.props

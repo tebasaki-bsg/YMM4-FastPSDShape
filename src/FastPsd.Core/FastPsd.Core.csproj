@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    YMM4 に依存しない部分（PSD の読み込み・表示状態の計算・合成手順・設定ファイル）。
+    プラグイン本体（YMM4FastPsd）はこのソースを直接取り込んでビルドするので、配布する DLL は1つで済む。
+    このプロジェクトはテスト用。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>FastPsd.Core</RootNamespace>
+  </PropertyGroup>
+
+</Project>

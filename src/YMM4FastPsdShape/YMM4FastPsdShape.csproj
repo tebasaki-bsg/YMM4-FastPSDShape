@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    YMM4 高速PSD図形プラグイン本体。
+    ビルド前に、リポジトリのルートに Directory.Build.props を置き、
+    YMM4DirPath に YukkuriMovieMaker.exe のあるフォルダを書いてください（Directory.Build.props.sample 参照）。
+    画面は XAML ファイルを使わずコードで作っているので、Windows 以外（Linux など）でも配布用の DLL を作れます。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>YMM4FastPsdShape</AssemblyName>
+    <RootNamespace>YMM4FastPsdShape</RootNamespace>
+    <Version>0.1.3</Version>
+    <Product>YMM4 高速PSD図形プラグイン</Product>
+    <Description>ゆっくりMovieMaker4用の高速なPSD図形プラグイン</Description>
+    <Authors>Tebasaki</Authors>
+    <Copyright>Copyright (c) 2026 Tebasaki</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Pdb内にソースコードのフルパスを含めない -->
+    <RepoRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\'))</RepoRoot>
+    <PathMap>$(RepoRoot)=.</PathMap>
+    <!-- WPF の SDK を使わず、YMM4 のフォルダにある WPF の DLL を直接参照する（どの OS でもビルドできるように） -->
+    <UseWPF>false</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DisableTransitiveFrameworkReferenceDownloads>true</DisableTransitiveFrameworkReferenceDownloads>
+  </PropertyGroup>
+
+  <!-- YMM4 に依存しない部分のソースを取り込む（配布するDLLを1つにするため） -->
+  <ItemGroup>
+    <Compile Include="..\FastPsd.Core\**\*.cs" Exclude="..\FastPsd.Core\obj\**;..\FastPsd.Core\bin\**" Link="Core\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="PresentationCore"><HintPath>$(YMM4DirPath)PresentationCore.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PresentationFramework"><HintPath>$(YMM4DirPath)PresentationFramework.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="WindowsBase"><HintPath>$(YMM4DirPath)WindowsBase.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="System.Xaml"><HintPath>$(YMM4DirPath)System.Xaml.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="YukkuriMovieMaker.Plugin"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Plugin.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="YukkuriMovieMaker.Controls"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Controls.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="YukkuriMovieMaker.Settings"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Settings.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpGen.Runtime"><HintPath>$(YMM4DirPath)SharpGen.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SharpGen.Runtime.COM"><HintPath>$(YMM4DirPath)SharpGen.Runtime.COM.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.Direct2D1"><HintPath>$(YMM4DirPath)Vortice.Direct2D1.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.DirectX"><HintPath>$(YMM4DirPath)Vortice.DirectX.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.DXGI"><HintPath>$(YMM4DirPath)Vortice.DXGI.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Vortice.Mathematics"><HintPath>$(YMM4DirPath)Vortice.Mathematics.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- .NET の参照パックにある型転送用の WindowsBase.dll は、YMM4 の WindowsBase.dll とぶつかるので外す -->
+  <Target Name="RemoveRefPackWindowsBase" AfterTargets="ResolveTargetingPackAssets">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'WindowsBase' And '%(Reference.HintPath)' == ''" />
+    </ItemGroup>
+  </Target>
+
+</Project>
