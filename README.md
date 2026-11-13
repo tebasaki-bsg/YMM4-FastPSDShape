@@ -35,6 +35,8 @@ cd tests/FastPsd.Core.Tests
 dotnet run -c Release -- ../fixtures/rules.psd [合成テスト用PSDのフォルダ] [速度確認用PSD]
 ```
 
+`rules.psd` と同じフォルダに `flip.psd` があれば、「:flip」ルールも確かめます。どちらも `tests/fixtures` の Python スクリプト（psd-tools が必要）で作り直せます。
+
 ## 設定ファイル
 
 プリセットは、PSD と同じフォルダの `<PSD名>-ymmfastpsdshape.json` に保存します（同じ PSD を使う図形で共通）。

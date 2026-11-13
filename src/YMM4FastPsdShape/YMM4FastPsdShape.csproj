@@ -13,7 +13,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>YMM4FastPsdShape</AssemblyName>
     <RootNamespace>YMM4FastPsdShape</RootNamespace>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <Product>YMM4 高速PSD図形プラグイン</Product>
     <Description>ゆっくりMovieMaker4用の高速なPSD図形プラグイン</Description>
     <Authors>Tebasaki</Authors>

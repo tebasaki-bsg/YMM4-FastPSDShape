@@ -54,7 +54,7 @@ using (var psd = PsdFile.Open(rulesPath))
 
     bool V(VisibilityState s, string key) => s.EffectiveVisible[psd.ByKey[key].Index];
     VisibilityState R(RuleOptions? rules = null, SettingSet? set = null, IReadOnlyList<LayerOverrides>? ov = null,
-                      double vol = -1, MouthMode mouth = MouthMode.Normal) =>
+                      double vol = -1, MouthMode mouth = MouthMode.VolumePriority) =>
         StateResolver.Resolve(new StateInput
         {
             Psd = psd, Rules = rules ?? new RuleOptions(), Settings = set, Overrides = ov ?? [],
@@ -93,38 +93,7 @@ using (var psd = PsdFile.Open(rulesPath))
     var s5b = R(set: slider);
     Check(V(s5b, "腕/腕0") && V(s5b, "腕/腕1"), "選択がなければPSDの状態のまま");
 
-    Console.WriteLine("[口パク]");
-    var lip = new SettingSet { LipSensitivity = 0.2, LipSyncs = [new LipSyncSetting { TargetKey = "口/*口A", Frames = ["口/*口A/開", "口/*口A/半", "口/*口A/閉"] }] };
-    Check(V(R(set: lip, vol: -1), "口/*口A/閉"), "セリフなし → 閉");
-    Check(V(R(set: lip, vol: 0.05), "口/*口A/閉"), "0.05 → 閉（0.067未満）");
-    Check(V(R(set: lip, vol: 0.1), "口/*口A/半") && !V(R(set: lip, vol: 0.1), "口/*口A/閉"), "0.1 → 半");
-    Check(V(R(set: lip, vol: 0.15), "口/*口A/開"), "0.15 → 開");
-    Check(V(R(set: lip, vol: 0.9), "口/*口A/開"), "感度以上 → 開");
-    Check(V(R(set: lip, vol: 0.15, mouth: MouthMode.AlwaysClosed), "口/*口A/閉"), "常に閉じる");
-    Check(V(R(set: lip, vol: -1, mouth: MouthMode.AlwaysOpen), "口/*口A/開"), "常に開く");
-    var sLipB = R(set: lip, ov: [o2], vol: 0.15);
-    Check(!V(sLipB, "口/*口A/開") && V(sLipB, "口/*口B"), "対象の差分が非表示なら動かない");
-
-    // 対象をフォルダではなく「開いた口」のレイヤーにした場合（ユーザーが右クリックしたのが *開く などの場合）
-    var lipOnLayer = new SettingSet { LipSensitivity = 0.2, LipSyncs = [new LipSyncSetting { TargetKey = "口/*口A/開", Frames = ["口/*口A/開", "口/*口A/半", "口/*口A/閉"] }] };
-    Check(V(R(set: lipOnLayer, vol: 0.15), "口/*口A/開"), "対象がコマの1つ: 閉じた口が表示中でも動く");
-    Check(V(R(set: lipOnLayer, vol: -1), "口/*口A/閉"), "対象がコマの1つ: セリフなし → 閉");
-    var blinkOnLayer = new SettingSet { Blinks = [new BlinkSetting { TargetKey = "目/*通常目", Frames = ["目/*通常目", "目/*ジト目", "目/*閉じ目"], RandomInterval = false, IntervalMinSeconds = 1, FrameLength = 1 }] };
-    var stB = StateResolver.Resolve(new StateInput { Psd = psd, Settings = blinkOnLayer, Fps = 30, ItemFrame = 32 });
-    Check(stB.EffectiveVisible[psd.ByKey["目/*閉じ目"].Index], "目パチ: 対象がコマの1つ（開いた目が表示中）なら動く");
-    var stB2 = StateResolver.Resolve(new StateInput { Psd = psd, Settings = blinkOnLayer, Fps = 30, ItemFrame = 32, Overrides = [o1] });
-    Check(stB2.EffectiveVisible[psd.ByKey["目/*ジト目"].Index] && !stB2.EffectiveVisible[psd.ByKey["目/*閉じ目"].Index], "目パチ: 開いた目以外を選んでいると動かない");
-
-    // 平らに並んだ口（口A＝開、口B＝閉）で、口Aに口パクを設定した場合。ここでは 目/*通常目＝口A、目/*閉じ目＝口B に見立てる
-    var flat = new SettingSet { LipSensitivity = 0.2, LipSyncs = [new LipSyncSetting { TargetKey = "目/*通常目", Frames = ["目/*通常目", "目/*閉じ目"] }] };
-    var selB = new LayerOverrides(); selB.Select["目"] = "目/*閉じ目";
-    var selA = new LayerOverrides(); selA.Select["目"] = "目/*通常目";
-    Check(V(R(set: flat, vol: 0.15), "目/*通常目"), "口A/口B: 選択なし・声あり → 口A（開）");
-    Check(V(R(set: flat, vol: -1), "目/*閉じ目"), "口A/口B: 選択なし・声なし → 口B（閉）");
-    Check(V(R(set: flat, ov: [selB], vol: 0.15), "目/*閉じ目") && !V(R(set: flat, ov: [selB], vol: 0.15), "目/*通常目"), "口Bを明示的に選ぶ → 声があっても口Bのまま");
-    Check(V(R(set: flat, ov: [selA], vol: -1), "目/*閉じ目"), "口Aを選ぶ → 口パクは動く");
-    Check(V(R(set: flat, ov: [selB, selA], vol: 0.15), "目/*通常目"), "立ち絵で口B、表情で口A → 表情が優先され口パクが動く");
-    Check(V(R(set: flat, ov: [selB], vol: -1, mouth: MouthMode.AlwaysOpen), "目/*通常目"), "口Bを選んでいても「常に開く」は優先");
+    // 口パクは図形にはないので、ここでは確かめない（Core は高速PSD立ち絵 v0.1.9 と同じ。そちらのテストで確認済み）
 
     Console.WriteLine("[目パチ]");
     var fixedBlink = new BlinkSetting { Frames = ["a", "b", "c"], FrameLength = 2, RandomInterval = false, IntervalMinSeconds = 1 };
@@ -159,6 +128,34 @@ using (var psd = PsdFile.Open(rulesPath))
     var s4 = R(set: slider, ov: [e4]);
     Check(e4.Select["腕"] == "腕/腕2" && V(s4, "腕/腕2") && !V(s4, "腕/腕0"), "スライダー2 = 上から3番目");
     Check(OverridesEditor.SelectedIndex(psd, R(set: slider, ov: [OverridesEditor.SelectIndex(new LayerOverrides(), psd, "腕", 1)]), "腕") == 1, "スライダーの番号の往復");
+
+    Console.WriteLine("[図形: 中クリック（それ1つだけ）]");
+    {
+        var noFlip = new HashSet<int>();
+        LayerOverrides? Solo(LayerOverrides cur, string key, RuleOptions? rules = null)
+        {
+            rules ??= new RuleOptions();
+            var st = StateResolver.Resolve(new StateInput { Psd = psd, Rules = rules, Overrides = [cur] });
+            return OverridesEditor.Solo(cur, psd, psd.ByKey[key], rules, [], noFlip, st.Visible);
+        }
+        bool Own(LayerOverrides o, string key, RuleOptions? rules = null) =>
+            StateResolver.Resolve(new StateInput { Psd = psd, Rules = rules ?? new RuleOptions(), Overrides = [o] }).Visible[psd.ByKey[key].Index];
+
+        var solo1 = Solo(new LayerOverrides(), "重複")!;
+        Check(Own(solo1, "重複") && !Own(solo1, "重複#1") && !Own(solo1, "目") && !Own(solo1, "口") && !Own(solo1, "腕"), "同じ階層のほかの要素（フォルダも）をオフ");
+        Check(Own(solo1, "!輪郭") && Own(solo1, "!体"), "「!」ルールがオンなら「!」の要素は表示のまま");
+        Check(Solo(solo1, "重複") == null, "すでにそれ1つだけなら何もしない");
+        var solo2 = Solo(new LayerOverrides(), "目/*ジト目")!;
+        Check(Own(solo2, "目/*ジト目") && !Own(solo2, "目/*通常目") && !Own(solo2, "目/*閉じ目") && solo2.Select.ContainsKey("目"), "「*」のグループでは選択として記録");
+        var solo3 = Solo(new LayerOverrides(), "口/*口A/半")!;
+        Check(Own(solo3, "口/*口A/半") && !Own(solo3, "口/*口A/開") && !Own(solo3, "口/*口A/閉") && Own(solo3, "口/*口A"), "フォルダの中でも同じ。親フォルダは変えない");
+        var hideMouth = new LayerOverrides(); hideMouth.Visible["口"] = false;
+        var solo4 = Solo(hideMouth, "口/*口A/開")!;
+        Check(Own(solo4, "口/*口A/開") && !Own(solo4, "口") && !V(R(ov: [solo4]), "口/*口A/開"), "親フォルダが非表示ならそのまま（見えないまま）");
+        var noBang = new RuleOptions { Exclamation = false };
+        var solo6 = Solo(new LayerOverrides(), "重複", noBang)!;
+        Check(!Own(solo6, "!輪郭", noBang), "「!」ルールがオフなら「!」の要素もオフ");
+    }
 
     Console.WriteLine("[サムネイル]");
     var big = psd.All.First(l => l.HasPixels);
@@ -202,6 +199,32 @@ using (var psd = PsdFile.Open(rulesPath))
     var replaced = TachiePresetImport.Merge(shapeFile, [new Preset { Name = "笑顔", Overrides = o9 }], overwrite: true);
     Check(replaced.SequenceEqual(["笑顔"]) && shapeFile.Presets.Count == 3 && shapeFile.Presets[0].Overrides.Visible.ContainsKey("重複"), "上書きを選ぶと置き換え");
 
+    // お気に入りとルールの指定の引き継ぎ（v0.1.4）
+    var favSrc = new Preset { Name = "星", Favorite = true, ExclamationRule = false };
+    var favConv = TachiePresetImport.Convert(favSrc, psd, []);
+    Check(favConv.Favorite && favConv.ExclamationRule == false && favConv.AsteriskRule == null, "取り込みでお気に入りとルールの指定を引き継ぐ");
+    var favFile = new ShapePresetFile();
+    TachiePresetImport.Merge(favFile, [favConv, new Preset { Name = "普通" }], overwrite: false);
+    Check(favFile.Presets[0].Favorite && favFile.Presets[0].ExclamationRule == false && !favFile.Presets[1].Favorite && favFile.Presets[1].ExclamationRule == null, "追加でもお気に入りとルールの指定を持つ");
+    TachiePresetImport.Merge(favFile, [new Preset { Name = "星 (2)", Favorite = true }], overwrite: false);
+    Check(favFile.Presets.Count == 3 && favFile.Presets[2].Favorite, "番号を付けて追加してもお気に入りは残る");
+    favFile.Presets[1].Favorite = true; // 図形側でお気に入りにしたもの
+    TachiePresetImport.Merge(favFile, [new Preset { Name = "普通", AsteriskRule = false }], overwrite: true);
+    Check(favFile.Presets[1].Favorite && favFile.Presets[1].AsteriskRule == false, "上書きでも、図形側のお気に入りは残し、ルールの指定は取り込んだものにする");
+    TachiePresetImport.Merge(favFile, [new Preset { Name = "星" }], overwrite: true);
+    Check(favFile.Presets[0].Favorite && favFile.Presets[0].ExclamationRule == null, "上書き: 取り込むほうにルールの指定がなければ消える（内容と一緒に置き換え）");
+
+    Console.WriteLine("[図形: お気に入り]");
+    {
+        var ff = new ShapePresetFile { Presets = [new Preset { Name = "A" }, new Preset { Name = "B" }, new Preset { Name = "C" }, new Preset { Name = "D" }] };
+        Check(string.Concat(ff.PresetsInDisplayOrder().Select(p => p.Name)) == "ABCD", "お気に入りなし → 保存した順");
+        Check(ff.ToggleFavorite("C") == true && ff.ToggleFavorite("B") == true, "お気に入りにする");
+        Check(string.Concat(ff.PresetsInDisplayOrder().Select(p => p.Name)) == "BCAD", "お気に入りが上、それぞれの中は保存した順");
+        Check(ff.ToggleFavorite("C") == false && string.Concat(ff.PresetsInDisplayOrder().Select(p => p.Name)) == "BACD", "お気に入りを外すと元の位置に戻る");
+        Check(ff.ToggleFavorite("なし") == null, "ないプリセットは何もしない");
+        Check(string.Concat(ff.Presets.Select(p => p.Name)) == "ABCD", "保存の順番そのものは変えない");
+    }
+
     var tmpShape = Path.Combine(Path.GetTempPath(), $"fastpsdshape-test-{Guid.NewGuid():N}.psd");
     try
     {
@@ -212,6 +235,18 @@ using (var psd = PsdFile.Open(rulesPath))
         var tf = TachiePresetImport.ReadTachieFile(tmpShape);
         Check(tf != null && tf.SettingSets[0].Presets[0].Overrides.Select["腕"] == "腕/腕1", "立ち絵の設定ファイルを読む");
         Check(TachiePresetImport.ReadTachieFile(tmpShape + "x.psd") == null, "立ち絵の設定ファイルがなければ null");
+        // 立ち絵 v0.1.9 の形式（お気に入り・ルールの指定あり）
+        File.WriteAllText(SettingsFile.PathFor(tmpShape), """{"Version":3,"SettingSets":[{"Id":"x","Name":"キャラA","Presets":[{"Name":"p","Overrides":{"Visible":{},"Select":{}},"Favorite":true,"ExclamationRule":false}]}]}""");
+        var tf3 = TachiePresetImport.ReadTachieFile(tmpShape)!.SettingSets[0].Presets[0];
+        Check(tf3.Favorite && tf3.ExclamationRule == false && tf3.AsteriskRule == null, "立ち絵のお気に入りとルールの指定を読む");
+
+        // v0.1.3 以前の図形のファイル（お気に入りなし）
+        File.WriteAllText(ShapePresetFile.PathFor(tmpShape), """{"Version":1,"Presets":[{"Name":"old","Overrides":{"Visible":{},"Select":{}}}]}""");
+        var oldShape = ShapePresetFile.Load(tmpShape);
+        Check(!oldShape.Presets[0].Favorite && oldShape.Presets[0].ExclamationRule == null, "v0.1.3 以前の図形のファイルはお気に入りなし・ルールの指定なしとして読む");
+        ShapePresetStore.Update(tmpShape, f => f.ToggleFavorite("old"));
+        var savedShape = File.ReadAllText(ShapePresetFile.PathFor(tmpShape));
+        Check(ShapePresetFile.Load(tmpShape).Presets[0].Favorite && !savedShape.Contains("Rule"), "お気に入りはファイルに保存され、ルールの指定がなければ書かない");
     }
     finally
     {
@@ -261,9 +296,65 @@ using (var psd = PsdFile.Open(rulesPath))
         Check(SettingsFile.Load(tmpPsd).SettingSets.Count == 2, "ディスクに保存されている");
         File.WriteAllText(SettingsFile.PathFor(tmpPsd), """{"Version":1,"SettingSets":[{"Id":"x","Name":"old","LipSyncs":[{"TargetKey":"t","Frames":["閉","半","開"]}]}]}""");
         var migrated = SettingsFile.Load(tmpPsd);
-        Check(migrated.Version == 2 && migrated.SettingSets[0].LipSyncs[0].Frames.SequenceEqual(["開", "半", "閉"]), "旧形式（閉→開）の口パクは開→閉に並べ替えて読む");
+        Check(migrated.Version == SettingsFile.CurrentVersion && migrated.SettingSets[0].LipSyncs[0].Frames.SequenceEqual(["開", "半", "閉"]), "旧形式（閉→開）の口パクは開→閉に並べ替えて読む");
     }
     finally { try { File.Delete(SettingsFile.PathFor(tmpPsd)); } catch { } }
+}
+
+// ---- 「:flip」ルール（rules.psd と同じフォルダの flip.psd。make_flip_psd.py で作る） ----
+var flipPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(rulesPath)) ?? ".", "flip.psd");
+if (File.Exists(flipPath))
+{
+    using var fp = PsdFile.Open(flipPath);
+    Console.WriteLine("[「:flip」ルール]");
+    VisibilityState F(FlipMode mode, bool rule = true, LayerOverrides? ov = null) =>
+        StateResolver.Resolve(new StateInput
+        {
+            Psd = fp, Rules = new RuleOptions { Flip = rule }, Flip = mode,
+            Overrides = ov == null ? [] : [ov],
+        });
+    bool FV(VisibilityState st, string key) => st.EffectiveVisible[fp.ByKey[key].Index];
+
+    Check(FlipMap.ParseTokens("体:flipx:flipy") == ("体", true, true, false) && FlipMap.ParseTokens("a:b:flipxy") == ("a:b", false, false, true)
+          && FlipMap.ParseTokens("目") == ("目", false, false, false), "名前の末尾の読み取り");
+    var map = FlipMap.For(fp);
+    Check(map.Pairs.Count == 6 && !map.Flipped.Contains(fp.ByKey["孤立:flipx"].Index), $"対応づけ（{map.Pairs.Count}組。相手のない「孤立:flipx」は普通の要素）");
+
+    var n0 = F(FlipMode.None);
+    Check(FV(n0, "服/上") && !FV(n0, "服/上:flipx") && FV(n0, "!丸") && !FV(n0, "!丸:flipx"), "反転なし: 反転用は非表示（「!」で始まっていても）");
+    Check(FV(n0, "孤立:flipx"), "反転なし: 相手のない「:flipx」は普通に表示");
+    Check(FV(n0, "保存反転") && !FV(n0, "保存反転:flipx"), "保存時に反転用だけが表示 → 通常用に移す");
+    Check(n0.BeforeFlip == null, "反転なしなら入れ替えの前の状態は持たない");
+
+    var x = F(FlipMode.X);
+    Check(!FV(x, "服/上") && FV(x, "服/上:flipx") && FV(x, "服/上:flipx/柄A") && !FV(x, "服/上:flipx/柄B"), "左右反転: フォルダを入れ替え、中身のオン・オフも写す");
+    Check(!FV(x, "!丸") && FV(x, "!丸:flipx"), "左右反転: 「!」の要素も入れ替える");
+    Check(!FV(x, "顔") && FV(x, "顔:flipx:flipy") && !FV(x, "顔:flipxy"), "左右反転: 「:flipx:flipy」を使う");
+    Check(FV(x, "保存反転:flipx") && !FV(x, "保存反転"), "左右反転: 保存時に反転用だった要素も反転用で出る");
+    Check(x.BeforeFlip != null && x.BeforeFlip[fp.ByKey["服/上"].Index] && x.Hash != n0.Hash, "入れ替えの前の状態を残す（レイヤー欄用）");
+    var y = F(FlipMode.Y);
+    Check(FV(y, "顔:flipx:flipy") && !FV(y, "顔") && FV(y, "服/上") && !FV(y, "服/上:flipx"), "上下反転: 「:flipy」のある要素だけ入れ替える");
+    var xy = F(FlipMode.XY);
+    Check(FV(xy, "顔:flipxy") && !FV(xy, "顔:flipx:flipy") && !FV(xy, "顔") && FV(xy, "服/上"), "上下左右反転: 「:flipxy」だけを使う");
+
+    var ovB = new LayerOverrides(); ovB.Visible["服/上/柄B"] = true; ovB.Visible["服/上:flipx"] = true;
+    var xb = F(FlipMode.X, ov: ovB);
+    Check(FV(xb, "服/上:flipx/柄B") && FV(xb, "服/上:flipx/柄A"), "通常用で変えた中身が反転用に写る（反転用への上書きは無視）");
+    Check(!FV(F(FlipMode.None, ov: ovB), "服/上:flipx"), "反転なしなら、反転用を上書きしても表示しない");
+    var hideUp = new LayerOverrides(); hideUp.Visible["服/上"] = false;
+    Check(!FV(F(FlipMode.X, ov: hideUp), "服/上") && !FV(F(FlipMode.X, ov: hideUp), "服/上:flipx"), "通常用が非表示なら反転用も出さない");
+
+    var off = F(FlipMode.X, rule: false);
+    Check(FV(off, "服/上") && !FV(off, "服/上:flipx") && FV(off, "!丸:flipx") && FV(off, "!丸"), "ルールがオフ: 入れ替えず、反転用も普通の要素（「!」で表示）");
+
+    // 中クリックは反転用の要素に触らない
+    var fr = new RuleOptions();
+    var fst = StateResolver.Resolve(new StateInput { Psd = fp, Rules = fr });
+    var soloFlip = OverridesEditor.Solo(new LayerOverrides(), fp, fp.ByKey["顔"], fr, [], map.Flipped, fst.Visible)!;
+    Check(!soloFlip.Visible.ContainsKey("顔:flipx:flipy") && !soloFlip.Visible.ContainsKey("顔:flipxy") && soloFlip.Visible["服"] == false && soloFlip.Visible["孤立:flipx"] == false,
+        "中クリック: 反転用は触らず、相手のない「:flipx」は普通の要素としてオフ");
+    var soloX = F(FlipMode.X, ov: soloFlip);
+    Check(FV(soloX, "顔:flipx:flipy") && !FV(soloX, "服") && !FV(soloX, "口"), "中クリックのあと左右反転: 反転用の顔だけが出る");
 }
 
 // ---- 合成テスト：PSD内の統合画像（Photoshopの合成結果）と比べる ----

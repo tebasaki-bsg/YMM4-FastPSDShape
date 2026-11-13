@@ -12,6 +12,19 @@ public sealed class ShapePresetFile
     public const int CurrentVersion = 1;
     public List<Preset> Presets { get; set; } = [];
 
+    /// <summary>一覧に出す順番：お気に入りが上。お気に入り同士・それ以外同士は保存した順（v0.1.4。立ち絵と同じ）。</summary>
+    public IEnumerable<Preset> PresetsInDisplayOrder() =>
+        Presets.Where(p => p.Favorite).Concat(Presets.Where(p => !p.Favorite));
+
+    /// <summary>名前で指定したプリセットのお気に入りを切り替える。見つかれば切り替え後の値を返す。</summary>
+    public bool? ToggleFavorite(string name)
+    {
+        var p = Presets.FirstOrDefault(x => x.Name == name);
+        if (p == null) return null;
+        p.Favorite = !p.Favorite;
+        return p.Favorite;
+    }
+
     public const string Suffix = "-ymmfastpsdshape.json";
 
     public static string PathFor(string psdPath)
@@ -149,6 +162,7 @@ public static class TachiePresetImport
     /// 図形にはスライダーがないので、スライダー化したフォルダでの選択（Select）は
     /// 「選んだ要素を表示し、同じフォルダの他の要素を非表示」に置き換える（見た目を同じにするため）。
     /// 「*」グループの選択は図形でも同じ意味になるので、そのまま残す。
+    /// お気に入りと「*」「!」ルールの指定も引き継ぐ（v0.1.4）。
     /// </summary>
     public static Preset Convert(Preset source, PsdFile psd, IEnumerable<string> sliderGroups)
     {
@@ -167,12 +181,17 @@ public static class TachiePresetImport
             foreach (var s in child.Parent?.Children ?? psd.Roots)
                 o.Visible[s.Key] = s == child;
         }
-        return new Preset { Name = source.Name, Overrides = o };
+        return new Preset
+        {
+            Name = source.Name, Overrides = o,
+            Favorite = source.Favorite, AsteriskRule = source.AsteriskRule, ExclamationRule = source.ExclamationRule,
+        };
     }
 
     /// <summary>
     /// 取り込んだプリセットを加える。同じ名前があるとき、overwrite なら置き換え、そうでなければ「名前 (2)」のように番号を付けて加える。
     /// 戻り値は加えた（置き換えた）プリセットの名前。
+    /// お気に入りとルールの指定も加える。置き換えるときは、図形側でお気に入りにしていたら、そのまま残す。
     /// </summary>
     public static List<string> Merge(ShapePresetFile file, IEnumerable<Preset> imports, bool overwrite)
     {
@@ -183,8 +202,12 @@ public static class TachiePresetImport
             if (overwrite)
             {
                 int idx = file.Presets.FindIndex(x => x.Name == name);
-                var copy = new Preset { Name = name, Overrides = p.Overrides.Clone() };
-                if (idx >= 0) file.Presets[idx] = copy;
+                var copy = CopyOf(p, name);
+                if (idx >= 0)
+                {
+                    copy.Favorite |= file.Presets[idx].Favorite;
+                    file.Presets[idx] = copy;
+                }
                 else file.Presets.Add(copy);
             }
             else
@@ -197,10 +220,16 @@ public static class TachiePresetImport
                         if (file.Presets.All(x => x.Name != candidate)) { name = candidate; break; }
                     }
                 }
-                file.Presets.Add(new Preset { Name = name, Overrides = p.Overrides.Clone() });
+                file.Presets.Add(CopyOf(p, name));
             }
             names.Add(name);
         }
         return names;
     }
+
+    static Preset CopyOf(Preset p, string name) => new()
+    {
+        Name = name, Overrides = p.Overrides.Clone(),
+        Favorite = p.Favorite, AsteriskRule = p.AsteriskRule, ExclamationRule = p.ExclamationRule,
+    };
 }

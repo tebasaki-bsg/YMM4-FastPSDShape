@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using FastPsd.Core.Psd;
 using FastPsd.Core.Settings;
 using FastPsd.Core.State;
@@ -13,6 +14,7 @@ namespace YMM4FastPsdShape.UI;
 /// 図形アイテムの設定欄に出す画面。上段: プリセット、中段: レイヤーツリー、下段: 状態表示。
 /// ツリーのチェックはこのアイテムの差分（変えたところだけ）として記録する。
 /// 高速PSD立ち絵のレイヤー欄から、スライダー・口パク・目パチを除いたもの。
+/// v0.1.4 で立ち絵 v0.1.9 の中クリック（それ1つだけ）・プリセットのお気に入り・反転の表示・プリセットのルール指定を取り入れた。
 /// </summary>
 internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
 {
@@ -52,8 +54,16 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         buttons.Children.Add(SmallButton("リセット", "このアイテムで変更した内容をすべて取り消し、PSDの状態に戻します", ResetOverrides));
         DockPanel.SetDock(buttons, Dock.Right);
         presetRow.Children.Add(buttons);
-        _presetBox = new ComboBox { MinWidth = 120, ToolTip = "選ぶと、その内容がこのアイテムにコピーされます（その後も自由に変更できます）" };
+        _presetBox = new ComboBox
+        {
+            MinWidth = 120,
+            ItemTemplate = PresetTemplate(),
+            ToolTip = "選ぶと、その内容がこのアイテムにコピーされます（その後も自由に変更できます）。\n名前の左の星をクリックすると、お気に入りとして一覧の上に並びます。",
+        };
         _presetBox.SelectionChanged += (_, _) => { if (!_updatingPresetBox) Safe("プリセットの適用", ApplyPreset); };
+        // 一覧の中の星は、項目の選択より先に受け取る（選ばず・閉じずに、お気に入りだけ切り替える）
+        _presetBox.PreviewMouseLeftButtonDown += OnPresetPreviewMouseDown;
+        _presetBox.PreviewMouseLeftButtonUp += OnPresetPreviewMouseUp;
         presetRow.Children.Add(_presetBox);
         DockPanel.SetDock(presetRow, Dock.Top);
         root.Children.Add(presetRow);
@@ -75,12 +85,13 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         _tree.MouseLeave += (_, _) => _preview.Hide();
         _tree.PreviewMouseWheel += (_, _) => _preview.Hide();
         _tree.PreviewMouseDown += (_, _) => _preview.Hide();
+        _tree.PreviewMouseDown += OnTreeMiddleDown; // 中クリックで「それ1つだけ」（v0.1.4）
 
         Content = root;
         // 注意: Unloaded では接続を切らない（高速PSD立ち絵で確認済みの落とし穴）。
         // YMM4 の編集欄は一時的に画面から外して付け直すことがあり、そのとき SetBindings は呼び直されない。
         // 接続を切るのは ClearBindings（Detach）のときだけにし、ここでは共有イベントの購読だけを外す。
-        Loaded += (_, _) => { SubscribeShared(); QueueRefresh(); };
+        Loaded += (_, _) => { ApplyPresetItemStyle(); SubscribeShared(); QueueRefresh(); };
         Unloaded += (_, _) => { _preview.Hide(); UnsubscribeShared(); };
     }
 
@@ -241,7 +252,12 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
     // 表示の更新
     // ------------------------------------------------------------------
 
-    RuleOptions Rules => new() { Asterisk = _owner?.AsteriskRule ?? true, Exclamation = _owner?.ExclamationRule ?? true };
+    /// <summary>このアイテムのルール</summary>
+    RuleOptions Rules => _owner.GetRules();
+
+    /// <summary>相手のいる反転用の要素（「:flip」ルールがオンのときだけ）。薄く表示して操作できないようにする</summary>
+    IReadOnlySet<int> FlipCounterparts => _entry != null && Rules.Flip ? FlipMap.For(_entry.Psd).Flipped : EmptyIndexSet;
+    static readonly IReadOnlySet<int> EmptyIndexSet = new HashSet<int>();
 
     void Refresh()
     {
@@ -252,16 +268,21 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         var psd = _entry.Psd;
         var overrides = _owner.GetOverrides();
 
-        var state = StateResolver.Resolve(new StateInput { Psd = psd, Rules = Rules, Overrides = [overrides] });
+        var rules = Rules;
+        var state = StateResolver.Resolve(new StateInput { Psd = psd, Rules = rules, Overrides = [overrides], Flip = _owner.Flip.ToMode() });
+        // 通常用のチェックは入れ替えの前の状態（操作するのは通常用）、反転用は入れ替えたあとの状態を見せる
+        var flipped = FlipCounterparts;
+        var shownCheck = state.BeforeFlip ?? state.Visible;
         var touched = OverridesEditor.TouchedKeys(overrides);
-        bool excl = Rules.Exclamation;
+        bool excl = rules.Exclamation;
 
         foreach (var l in psd.All)
         {
             if (!_nodes.TryGetValue(l.Index, out var vm)) continue;
-            vm.SetCheckedSilently(state.Visible[l.Index]);
-            vm.IsCheckEnabled = !(excl && l.Name.StartsWith('!'));
-            vm.RowOpacity = l.Parent == null || state.EffectiveVisible[l.Parent.Index] ? 1.0 : 0.45;
+            bool isFlip = flipped.Contains(l.Index) || HasFlipAncestor(l, flipped);
+            vm.SetCheckedSilently(isFlip ? state.Visible[l.Index] : shownCheck[l.Index]);
+            vm.IsCheckEnabled = !isFlip && !(excl && l.Name.StartsWith('!'));
+            vm.RowOpacity = isFlip ? 0.35 : l.Parent == null || state.EffectiveVisible[l.Parent.Index] || (state.BeforeFlip != null && IsEffective(state.BeforeFlip, l.Parent)) ? 1.0 : 0.45;
             vm.NameWeight = touched.Contains(l.Key) ? FontWeights.Bold : FontWeights.Normal;
         }
 
@@ -271,6 +292,20 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
     }
 
     IReadOnlyList<string> _planWarnings = [];
+
+    static bool HasFlipAncestor(PsdLayer l, IReadOnlySet<int> flipped)
+    {
+        for (var p = l.Parent; p != null; p = p.Parent)
+            if (flipped.Contains(p.Index)) return true;
+        return false;
+    }
+
+    static bool IsEffective(bool[] vis, PsdLayer l)
+    {
+        for (var x = l; x != null; x = x.Parent)
+            if (!vis[x.Index]) return false;
+        return true;
+    }
 
     void UpdateStatus()
     {
@@ -289,16 +324,47 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
     void OnToggle(LayerNodeViewModel vm, bool value)
     {
         if (_entry == null || _owner == null) return;
+        if (FlipCounterparts.Contains(vm.Layer.Index) || HasFlipAncestor(vm.Layer, FlipCounterparts)) { QueueRefresh(); return; } // 反転用は操作できない
         var next = OverridesEditor.SetVisible(_owner.GetOverrides(), _entry.Psd, vm.Layer, value, Rules, []);
         Commit(next);
     }
 
-    void Commit(LayerOverrides next)
+    /// <summary>中クリック：その要素をオンにし、同じフォルダのほかの要素をすべてオフにする（「*」に似た動き）</summary>
+    void OnTreeMiddleDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != System.Windows.Input.MouseButton.Middle) return;
+        var vm = FindNode(e.OriginalSource as DependencyObject);
+        if (vm == null || _entry == null || _owner == null) return;
+        e.Handled = true;
+        Safe("それ1つだけにする", () =>
+        {
+            var flipped = FlipCounterparts;
+            if (flipped.Contains(vm.Layer.Index) || HasFlipAncestor(vm.Layer, flipped)) return; // 反転用は操作できない
+            var overrides = _owner.GetOverrides();
+            var rules = Rules;
+            // 反転用への入れ替えの前の状態で判断する（反転は付けずに計算）
+            var state = StateResolver.Resolve(new StateInput { Psd = _entry.Psd, Rules = rules, Overrides = [overrides] });
+            var next = OverridesEditor.Solo(overrides, _entry.Psd, vm.Layer, rules, [], flipped, state.Visible);
+            if (next == null) return; // すでにそれ1つだけ
+            ShapeLog.Info($"中クリックで「{vm.Layer.Key}」だけにする");
+            Commit(next);
+        });
+    }
+
+    static LayerNodeViewModel? FindNode(DependencyObject? d)
+    {
+        while (d != null && d is not TreeViewItem) d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+        return (d as TreeViewItem)?.DataContext as LayerNodeViewModel;
+    }
+
+    /// <summary>差分を書き込む。alsoChange はルールの切り替えなど、同じ「元に戻す」の単位にまとめたい変更</summary>
+    void Commit(LayerOverrides next, Action? alsoChange = null)
     {
         if (_owner == null) return;
         var json = next.IsEmpty ? "" : next.ToJson();
         ShapeLog.Info($"差分を変更 owner={ShapeLog.Id(_owner)} visible={next.Visible.Count} select={next.Select.Count}");
         BeginEdit?.Invoke(this, EventArgs.Empty);
+        alsoChange?.Invoke();
         _owner.OverridesJson = json;
         EndEdit?.Invoke(this, EventArgs.Empty);
         Refresh();
@@ -324,29 +390,155 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         _updatingPresetBox = true;
         try
         {
-            var presets = CurrentPresets;
-            var names = presets.Select(p => p.Name).ToList();
-            if (!_presetBox.Items.Cast<ComboBoxItem>().Select(i => (string)i.Tag).SequenceEqual(names))
+            var file = PsdPath is { } path ? ShapePresetStore.Get(path) : null;
+            var presets = file?.Presets ?? [];
+            // お気に入りが上（お気に入り同士・それ以外同士は保存した順）
+            var entries = file?.PresetsInDisplayOrder().Select(p => new PresetListItem { Name = p.Name, Favorite = p.Favorite }).ToList() ?? [];
+            var shown = _presetBox.Items.OfType<PresetListItem>().ToList();
+            if (!shown.Select(e => (e.Name, e.Favorite)).SequenceEqual(entries.Select(e => (e.Name, e.Favorite))))
             {
+                bool wasOpen = _presetBox.IsDropDownOpen;
                 _presetBox.Items.Clear();
-                foreach (var n in names) _presetBox.Items.Add(new ComboBoxItem { Content = new TextBlock { Text = n }, Tag = n });
+                foreach (var e in entries) _presetBox.Items.Add(e);
+                if (wasOpen && !_presetBox.IsDropDownOpen) _presetBox.IsDropDownOpen = true; // 星を切り替えても一覧は開いたまま
             }
             // 今の差分と同じプリセットがあれば、それを選択表示にする
             var json = current?.ToJson();
             var match = json == null ? null : presets.FirstOrDefault(p => p.Overrides.ToJson() == json);
-            _presetBox.SelectedItem = _presetBox.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == match?.Name);
+            _presetBox.SelectedItem = _presetBox.Items.OfType<PresetListItem>().FirstOrDefault(i => i.Name == match?.Name);
         }
         finally { _updatingPresetBox = false; }
     }
 
-    string? SelectedPresetName => (_presetBox.SelectedItem as ComboBoxItem)?.Tag as string;
+    string? SelectedPresetName => (_presetBox.SelectedItem as PresetListItem)?.Name;
 
     void ApplyPreset()
     {
         if (SelectedPresetName is not { } name) return;
         var preset = CurrentPresets.FirstOrDefault(p => p.Name == name);
-        if (preset != null) Commit(preset.Overrides.Clone());
+        if (preset == null) return;
+        // 立ち絵から取り込んだプリセットには、選んだときにアイテムのルールを変える指定があることがある（「!」の要素を隠すものなど）
+        Commit(preset.Overrides.Clone(), () =>
+        {
+            if (_owner is not { } o) return;
+            if (preset.AsteriskRule is bool a && o.AsteriskRule != a) { o.AsteriskRule = a; ShapeLog.Info($"プリセット「{preset.Name}」で「*」ルールを{(a ? "オン" : "オフ")}"); }
+            if (preset.ExclamationRule is bool e && o.ExclamationRule != e) { o.ExclamationRule = e; ShapeLog.Info($"プリセット「{preset.Name}」で「!」ルールを{(e ? "オン" : "オフ")}"); }
+        });
     }
+
+    // ---- お気に入り（v0.1.4。高速PSD立ち絵と同じ見た目と操作） ----
+
+    /// <summary>星を押したときのプリセット（離したときに同じ星なら切り替える）</summary>
+    PresetListItem? _starPressed;
+
+    void OnPresetPreviewMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _starPressed = null;
+        if (FavoriteStarInList(e.OriginalSource) is not { DataContext: PresetListItem item }) return;
+        _starPressed = item;
+        e.Handled = true; // 項目の選択・一覧を閉じる動作をさせない
+    }
+
+    void OnPresetPreviewMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var pressed = _starPressed;
+        _starPressed = null;
+        if (FavoriteStarInList(e.OriginalSource) is not { DataContext: PresetListItem item }) return;
+        e.Handled = true;
+        if (pressed == null || pressed.Name != item.Name || PsdPath is not { } path) return;
+        Safe("お気に入りの切り替え", () =>
+        {
+            bool? now = null;
+            ShapePresetStore.Update(path, f => now = f.ToggleFavorite(item.Name));
+            ShapeLog.Info($"プリセットのお気に入り「{item.Name}」→ {now}");
+            QueueRefresh(); // 一覧の並べ替えは、このクリックの処理が終わってから行う
+        });
+    }
+
+    /// <summary>
+    /// クリックされた要素が、一覧（ドロップダウン）の中の星なら、その星を返す。
+    /// 閉じた欄の星は表示だけなので null（ふつうに一覧を開く）。
+    /// </summary>
+    static FrameworkElement? FavoriteStarInList(object source)
+    {
+        FrameworkElement? star = null;
+        var d = source as DependencyObject;
+        while (d != null)
+        {
+            if (d is FrameworkElement fe && fe.Tag as string == FavoriteStarTag) star = fe;
+            if (d is ComboBoxItem) return star;
+            if (d is ComboBox) return null;
+            d = d is Visual or System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+        }
+        return null;
+    }
+
+    const string FavoriteStarTag = "FavoriteStar";
+    bool _presetItemStyleApplied;
+
+    /// <summary>
+    /// 一覧の項目の左の余白を、動く立ち絵の星の位置にそろえる（星の枠はその位置から始まる）。
+    /// 見た目は YMM4 のテーマの項目スタイルを引き継ぎ、左の余白だけ変える。テーマは画面に載ってから読めるので Loaded で行う。
+    /// </summary>
+    void ApplyPresetItemStyle()
+    {
+        if (_presetItemStyleApplied) return;
+        _presetItemStyleApplied = true;
+        var baseStyle = TryFindResource(typeof(ComboBoxItem)) as Style;
+        var pad = new Thickness(4, 1, 4, 1);
+        for (var st = baseStyle; st != null; st = st.BasedOn)
+        {
+            var setter = st.Setters.OfType<Setter>().FirstOrDefault(x => x.Property == PaddingProperty);
+            if (setter?.Value is Thickness t) { pad = t; break; }
+        }
+        var style = new Style(typeof(ComboBoxItem), baseStyle);
+        style.Setters.Add(new Setter(PaddingProperty, new Thickness(PresetStarLeft, pad.Top, pad.Right, pad.Bottom)));
+        _presetBox.ItemContainerStyle = style;
+    }
+
+    /// <summary>項目の左端から星の枠まで（動く立ち絵の画面〔拡大率125%〕で、項目の左端から星の見える端まで 6px）</summary>
+    const double PresetStarLeft = 4.5;
+
+    /// <summary>
+    /// プリセットの一覧の項目（閉じた欄にも同じものを使う）。
+    /// 星は 15×15 の枠に横幅 13.6 の五角の星、星の枠から名前まで 6（動く立ち絵の画面〔拡大率125%〕で、星 17px・星から次の要素まで 8px）。
+    /// 星の当たり判定は周り 4 ずつ広げる（見た目の位置は変えない）。
+    /// オン: 黄色（#FFE061 → #D7A548）、オフ: 文字の色。閉じた欄では、お気に入りでなければ星を出さない（場所は空けておく）。
+    /// </summary>
+    static DataTemplate PresetTemplate() => (DataTemplate)System.Windows.Markup.XamlReader.Parse("""
+        <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+            <StackPanel Orientation="Horizontal">
+                <Border x:Name="StarHit" Tag="FavoriteStar" Background="Transparent" Margin="-4,-4,2,-4" Padding="4" VerticalAlignment="Center">
+                    <Path x:Name="Star" Width="15" Height="15" Stretch="None" SnapsToDevicePixels="False"
+                          Data="STAR_GEOMETRY"
+                          Fill="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}"/>
+                </Border>
+                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+            </StackPanel>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Favorite}" Value="True">
+                    <Setter TargetName="Star" Property="Fill">
+                        <Setter.Value>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#FFE061" Offset="0"/>
+                                <GradientStop Color="#D7A548" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Setter.Value>
+                    </Setter>
+                </DataTrigger>
+                <MultiDataTrigger>
+                    <MultiDataTrigger.Conditions>
+                        <Condition Binding="{Binding Favorite}" Value="False"/>
+                        <Condition Binding="{Binding RelativeSource={RelativeSource AncestorType=ComboBoxItem}}" Value="{x:Null}"/>
+                    </MultiDataTrigger.Conditions>
+                    <Setter TargetName="StarHit" Property="Visibility" Value="Hidden"/>
+                </MultiDataTrigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+        """.Replace("STAR_GEOMETRY", StarGeometry));
+
+    /// <summary>15×15 の枠に収めた横幅 13.6 の五角の星（上が頂点、内側の半径は外側の 0.42 倍）</summary>
+    const string StarGeometry = "M7.50,1.03 L9.27,5.75 L14.30,5.97 L10.36,9.11 L11.70,13.97 L7.50,11.19 L3.30,13.97 L4.64,9.11 L0.70,5.97 L5.73,5.75 Z";
 
     void SavePreset()
     {
@@ -358,8 +550,14 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         var overrides = _owner.GetOverrides().Clone();
         ShapePresetStore.Update(path, f =>
         {
+            // 上書きのときは、お気に入りの印と、選んだときのルールの指定（立ち絵から取り込んだもの）を引き継ぐ。並び順もそのまま
             int idx = f.Presets.FindIndex(p => p.Name == name);
-            var preset = new Preset { Name = name, Overrides = overrides };
+            var old = idx >= 0 ? f.Presets[idx] : null;
+            var preset = new Preset
+            {
+                Name = name, Overrides = overrides, Favorite = old?.Favorite ?? false,
+                AsteriskRule = old?.AsteriskRule, ExclamationRule = old?.ExclamationRule,
+            };
             if (idx >= 0) f.Presets[idx] = preset;
             else f.Presets.Add(preset);
         });

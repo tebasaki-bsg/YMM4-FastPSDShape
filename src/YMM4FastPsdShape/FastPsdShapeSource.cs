@@ -37,6 +37,7 @@ internal sealed class FastPsdShapeSource : IShapeSource
     ulong _lastHash;
     bool _lastFolderClipping;
     bool _lastBake;
+    FlipMode _flip;
     bool _hasState;
 
     // 焼き付けた画像（共有）
@@ -110,16 +111,19 @@ internal sealed class FastPsdShapeSource : IShapeSource
         var psd = entry.Psd;
 
         // ---- 表示状態の計算 ----
+        var flip = p.Flip.ToMode();
         var state = StateResolver.Resolve(new StateInput
         {
             Psd = psd,
-            Rules = new RuleOptions { Asterisk = p.AsteriskRule, Exclamation = p.ExclamationRule },
+            Rules = p.GetRules(),
             Overrides = [p.GetOverrides()],
+            Flip = flip,
         });
         bool clipping = p.ApplyFolderClipping;
         bool bake = ShapePluginSettings.Bake;
-        if (_hasState && state.Hash == _lastHash && clipping == _lastFolderClipping && bake == _lastBake)
+        if (_hasState && state.Hash == _lastHash && clipping == _lastFolderClipping && bake == _lastBake && flip == _flip)
             return; // 見た目が変わらないので何もしない
+        _flip = flip; // 画像そのものの反転は Centering で行う（焼き付けた画像は反転前のまま共有する）
 
         // ---- 合成し直す ----
         var sw = Stopwatch.StartNew();
@@ -158,8 +162,15 @@ internal sealed class FastPsdShapeSource : IShapeSource
     Matrix3x2 Centering(int left, int top)
     {
         var psd = _entry!.Psd;
-        // 標準のPSD図形と同じく、PSDの中心をアイテムの位置に合わせる
-        return Matrix3x2.CreateTranslation(left + MathF.Floor(-psd.Width / 2f), top + MathF.Floor(-psd.Height / 2f));
+        // 標準のPSD図形と同じく、PSDの中心をアイテムの位置に合わせる。反転は中心を軸にする（高速PSD立ち絵と同じ）
+        var m = Matrix3x2.CreateTranslation(left + MathF.Floor(-psd.Width / 2f), top + MathF.Floor(-psd.Height / 2f));
+        return _flip switch
+        {
+            FlipMode.X => m * Matrix3x2.CreateScale(-1, 1),
+            FlipMode.Y => m * Matrix3x2.CreateScale(1, -1),
+            FlipMode.XY => m * Matrix3x2.CreateScale(-1, -1),
+            _ => m,
+        };
     }
 
     /// <summary>合成結果を1枚の画像に焼き付けて表示する（同じ状態の画像があれば共有する）</summary>
@@ -194,11 +205,13 @@ internal sealed class FastPsdShapeSource : IShapeSource
     {
         var dc = _devices.DeviceContext;
         var sw = Stopwatch.StartNew();
-        var bitmaps = _layerCache.Pin(dc, entry, plan.Layers, out var stats);
-        double tLoad = sw.Elapsed.TotalMilliseconds;
+        Dictionary<PsdLayer, ID2D1Bitmap1>? bitmaps = null;
         ID2D1Bitmap1? bmp = null;
         try
         {
+            // Pin も try の中で行う（展開に失敗しても焼き付けの失敗として扱い、コマンドリストで再挑戦する）
+            bitmaps = _layerCache.Pin(dc, entry, plan.Layers, out var stats);
+            double tLoad = sw.Elapsed.TotalMilliseconds;
             using var composed = D2DCompositor.Compose(dc, plan, bitmaps);
             var props = new BitmapProperties1(new PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target);
             bmp = dc.CreateBitmap(new SizeI(b.Width, b.Height), IntPtr.Zero, 0, props);
@@ -223,8 +236,9 @@ internal sealed class FastPsdShapeSource : IShapeSource
         finally
         {
             bmp?.Dispose();
-            // 焼き付けた後はレイヤー画像を使わないので返す（上限までは GPU に残るので、差分を戻したときも速い）
-            _layerCache.Unpin(entry, plan.Layers);
+            // 焼き付けた後はレイヤー画像を使わないので返す（上限までは GPU に残るので、差分を戻したときも速い）。
+            // Pin に失敗したときは、Pin の中で戻してあるので返さない（返すと、ほかのアイテムが使用中の画像まで外してしまう）
+            if (bitmaps != null) _layerCache.Unpin(entry, plan.Layers);
         }
     }
 
@@ -232,6 +246,7 @@ internal sealed class FastPsdShapeSource : IShapeSource
     void ShowCommandList(PsdEntry entry, RenderPlan plan, int width, int height, out string how)
     {
         var dc = _devices.DeviceContext;
+        // Pin は失敗したら自分で戻すので、ここで Unpin するのは Pin が成功した後の失敗だけ
         var bitmaps = _layerCache.Pin(dc, entry, plan.Layers, out var stats);
         ComposeResult? composed = null;
         try

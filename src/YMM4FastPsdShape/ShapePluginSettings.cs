@@ -8,7 +8,7 @@ namespace YMM4FastPsdShape;
 /// <summary>プラグイン全体の設定（YMM4 の「設定」→「図形」→「高速PSD」）</summary>
 public sealed class ShapePluginSettings : SettingsBase<ShapePluginSettings>
 {
-    public override SettingsCategory Category => SettingsCategory.Shape;
+    public override SettingsCategory Category => Ymm4Enum.ByName("Shape", SettingsCategory.Shape); // YMM4 の更新で番号がずれても困らないよう、名前で引く（v0.1.4）
     public override string Name => "高速PSD";
     public override bool HasSettingView => true;
     public override object SettingView => new SettingsView(this);

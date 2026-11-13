@@ -31,6 +31,34 @@ public static class OverridesEditor
         return o;
     }
 
+    /// <summary>
+    /// 中クリック（高速PSD立ち絵 v0.1.8、高速PSD図形 v0.1.4）：その要素をオンにし、同じフォルダのほかの要素（レイヤーもフォルダも）をオフにした新しい差分を返す。
+    /// 「!」ルールがオンなら「!」の要素は常に表示なので触らない。反転用の要素（flipCounterparts）も触らない。親フォルダは変えない。
+    /// すでにそれ1つだけがオンなら null（何もしない）。state はこのアイテムの今の表示状態（反転用への入れ替えの前）。
+    /// </summary>
+    public static LayerOverrides? Solo(LayerOverrides current, PsdFile psd, PsdLayer layer, RuleOptions rules, ICollection<string> sliderGroups,
+        IReadOnlySet<int> flipCounterparts, bool[] visible)
+    {
+        var siblings = layer.Parent?.Children ?? psd.Roots;
+        bool Untouched(PsdLayer s) => flipCounterparts.Contains(s.Index) || (rules.Exclamation && s.Name.StartsWith('!'));
+        var others = siblings.Where(s => s != layer && !Untouched(s)).ToList();
+        if (visible[layer.Index] && others.All(s => !visible[s.Index])) return null;
+
+        // その要素をオンにする（「*」・スライダーのグループでは選択として記録し、同じグループのほかの要素はそれで消える）
+        var o = SetVisible(current, psd, layer, true, rules, sliderGroups);
+        string parentKey = layer.Parent?.Key ?? "";
+        bool slider = sliderGroups.Contains(parentKey);
+        bool asteriskSelect = !slider && rules.Asterisk && layer.Name.StartsWith('*');
+        foreach (var s in others)
+        {
+            if (slider) break; // スライダーは選択だけで1つになる
+            if (asteriskSelect && s.Name.StartsWith('*')) continue; // 「*」どうしは選択で消える
+            o.Visible[s.Key] = false;
+        }
+        if (o.Select.TryGetValue(parentKey, out var sel) && sel != layer.Key) o.Select.Remove(parentKey);
+        return o;
+    }
+
     /// <summary>スライダーで番号を選んだときの新しい差分（0 = グループ内の一番上の要素）</summary>
     public static LayerOverrides SelectIndex(LayerOverrides current, PsdFile psd, string groupKey, int index)
     {

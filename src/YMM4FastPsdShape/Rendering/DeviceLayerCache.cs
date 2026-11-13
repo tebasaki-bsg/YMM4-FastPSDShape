@@ -82,12 +82,35 @@ internal sealed class DeviceLayerCache
     /// <summary>
     /// レイヤー画像を取得して「使用中」にする。まだGPUにないものは、PSDから並列に展開してから作る。
     /// 戻り値はレイヤー → 画像の対応。使い終わったら Unpin で返す。
+    /// 途中で失敗したら（展開・GPUへの転送）、この呼び出しで付けた「使用中」をすべて戻してから例外を投げる。
+    /// 呼び出し元は、成功したときだけ Unpin すればよい（v0.1.4。以前は失敗すると「使用中」のまま残り、その画像が捨てられなくなっていた）。
     /// </summary>
     public Dictionary<PsdLayer, ID2D1Bitmap1> Pin(ID2D1DeviceContext dc, PsdEntry entry, IReadOnlyList<PsdLayer> layers, out LoadStats stats)
     {
         var sw = Stopwatch.StartNew();
         var result = new Dictionary<PsdLayer, ID2D1Bitmap1>(layers.Count);
         lock (_lock)
+        {
+            try
+            {
+                return PinCore(dc, entry, layers, result, sw, out stats);
+            }
+            catch
+            {
+                foreach (var l in result.Keys)
+                {
+                    if (!_items.TryGetValue((entry, l), out var it) || it.Pins == 0) continue;
+                    it.Pins--;
+                    if (it.Pins == 0) _idleBytes += it.Bytes;
+                }
+                throw;
+            }
+        }
+    }
+
+    Dictionary<PsdLayer, ID2D1Bitmap1> PinCore(ID2D1DeviceContext dc, PsdEntry entry, IReadOnlyList<PsdLayer> layers,
+        Dictionary<PsdLayer, ID2D1Bitmap1> result, Stopwatch sw, out LoadStats stats)
+    {
         {
             var missing = new List<PsdLayer>();
             foreach (var l in layers)

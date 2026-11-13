@@ -11,24 +11,34 @@ using YukkuriMovieMaker.Settings;
 namespace YMM4FastPsdShape;
 
 /// <summary>図形アイテム（種類「高速PSD」）に保存する設定</summary>
-public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : ShapeParameterBase(sharedData), IFileItem
+public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : ShapeParameterBase(sharedData), IFileItem, ILayerOptionsOwner
 {
     [Display(Name = "PSDファイル", Description = "表示するPSDファイル（.psb には対応していません）", Order = 0)]
     [FileSelector(FileGroupType.None, CustomFilterName = "PSDファイル", CustomFilterValue = "*.psd", FileGroup = FileGroupType.ImageItem, FileType = FileType.画像, PropertyEditorSize = PropertyEditorSize.FullWidth)]
     public string? FilePath { get => filePath; set => Set(ref filePath, value); }
     string? filePath;
 
+    [Display(Name = "反転", Description = LayerOptions.FlipDescription, Order = 1)]
+    [EnumComboBox]
+    public FlipSetting Flip { get => flip; set => Set(ref flip, value); }
+    FlipSetting flip = FlipSetting.None;
+
     [Display(Name = "「*」ルール", Description = "同じフォルダ内で名前が「*」で始まる要素は、1つだけ表示します", Order = 10)]
     [ToggleSlider]
     public bool AsteriskRule { get => asteriskRule; set => Set(ref asteriskRule, value); }
     bool asteriskRule = true;
 
-    [Display(Name = "「!」ルール", Description = "名前が「!」で始まる要素は、常に表示します", Order = 11)]
+    [Display(Name = "「!」ルール", Description = "名前が「!」で始まる要素は、常に表示します（反転用の要素は除く）", Order = 11)]
     [ToggleSlider]
     public bool ExclamationRule { get => exclamationRule; set => Set(ref exclamationRule, value); }
     bool exclamationRule = true;
 
-    [Display(Name = "フォルダのクリッピング", Description = "オフ: Photoshop準拠（フォルダ自体のクリッピングを無視）\nオン: CLIP STUDIO PAINT準拠（適用）", Order = 12)]
+    [Display(Name = "「:flip」ルール", Description = "名前の末尾が「:flipx」「:flipy」「:flipxy」の要素を、反転したときだけ使う反転用として扱います（PSDTool と同じ）。オフなら普通の要素です", Order = 12)]
+    [ToggleSlider]
+    public bool FlipRule { get => flipRule; set => Set(ref flipRule, value); }
+    bool flipRule = true;
+
+    [Display(Name = "フォルダのクリッピング", Description = "オフ: Photoshop準拠（フォルダ自体のクリッピングを無視）\nオン: CLIP STUDIO PAINT準拠（適用）", Order = 13)]
     [ToggleSlider]
     public bool ApplyFolderClipping { get => applyFolderClipping; set => Set(ref applyFolderClipping, value); }
     bool applyFolderClipping;
@@ -37,7 +47,7 @@ public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : 
     /// レイヤーの差分（変更した部分だけ）を JSON で持つ。
     /// YMM4 がプロジェクトに保存しやすいよう、文字列にしている。編集はレイヤーツリーの画面から行う。
     /// </summary>
-    [Display(Name = "レイヤー", Description = "レイヤーの表示とプリセット", Order = 20)]
+    [Display(Name = "レイヤー", Description = "レイヤーの表示とプリセット。中クリックでその要素だけを表示します（同じフォルダのほかの要素をオフ）", Order = 20)]
     [UI.LayerTreeEditor]
     public string OverridesJson { get => overridesJson; set => Set(ref overridesJson, value ?? ""); }
     string overridesJson = "";
@@ -76,6 +86,8 @@ public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : 
         public bool AsteriskRule { get; } = p.AsteriskRule;
         public bool ExclamationRule { get; } = p.ExclamationRule;
         public bool ApplyFolderClipping { get; } = p.ApplyFolderClipping;
+        public FlipSetting Flip { get; } = p.Flip;
+        public bool FlipRule { get; } = p.FlipRule;
 
         public void ApplyTo(FastPsdShapeParameter p)
         {
@@ -84,6 +96,8 @@ public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : 
             p.AsteriskRule = AsteriskRule;
             p.ExclamationRule = ExclamationRule;
             p.ApplyFolderClipping = ApplyFolderClipping;
+            p.Flip = Flip;
+            p.FlipRule = FlipRule;
         }
     }
 
@@ -108,7 +122,10 @@ public sealed class FastPsdShapeParameter(SharedDataStore? sharedData = null) : 
 
     public IEnumerable<TimelineResource> GetResources()
     {
-        if (TimelineResource.TryParseFromPath(FilePath, TimelineResourceType.Image, out var resource))
+        if (TimelineResource.TryParseFromPath(FilePath, ImageResourceType, out var resource))
             yield return resource;
     }
+
+    /// <summary>YMM4 の更新で番号がずれても困らないよう、名前で引く（v0.1.4）</summary>
+    static readonly TimelineResourceType ImageResourceType = Ymm4Enum.ByName("Image", TimelineResourceType.Image);
 }
