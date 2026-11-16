@@ -133,8 +133,8 @@ internal sealed class DeviceLayerCache
                 for (int i = 0; i < missing.Count; i++)
                 {
                     var l = missing[i];
-                    var bmp = CreateBitmap(dc, decoded[i], l.Width, l.Height);
-                    var it = new Item { Bitmap = bmp, Bytes = (long)l.Width * l.Height * 4, Pins = 1, LastUse = ++_useCounter };
+                    var bmp = CreateBitmap(dc, decoded[i], l.ImageWidth, l.ImageHeight);
+                    var it = new Item { Bitmap = bmp, Bytes = (long)l.ImageWidth * l.ImageHeight * 4, Pins = 1, LastUse = ++_useCounter };
                     _items[(entry, l)] = it;
                     result[l] = bmp;
                 }
@@ -143,7 +143,7 @@ internal sealed class DeviceLayerCache
             {
                 foreach (var d in decoded) if (d != null) PsdFile.ReturnBuffer(d);
             }
-            stats = new LoadStats(layers.Count, missing.Count, missing.Sum(l => (long)l.Width * l.Height * 4), sw.Elapsed);
+            stats = new LoadStats(layers.Count, missing.Count, missing.Sum(l => (long)l.ImageWidth * l.ImageHeight * 4), sw.Elapsed);
         }
         return result;
     }

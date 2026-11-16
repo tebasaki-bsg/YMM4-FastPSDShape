@@ -28,6 +28,15 @@ public sealed class ShapePluginSettings : SettingsBase<ShapePluginSettings>
     public bool VerboseLog { get => verboseLog; set { if (Set(ref verboseLog, value)) ShapeLog.Verbose = value; } }
     bool verboseLog = false;
 
+    /// <summary>
+    /// PSD をタイムラインにドラッグ＆ドロップしたとき、画像アイテムではなく高速PSDの図形アイテムとして置くか（v0.2.0。既定はオン）
+    /// </summary>
+    public bool DropPsdAsShapeItem { get => dropPsdAsShapeItem; set { if (Set(ref dropPsdAsShapeItem, value)) DropPsdAsShape = value; } }
+    bool dropPsdAsShapeItem = true;
+
+    /// <summary>ドロップのときに読む値（設定の読み込み前でも使えるように静的に持つ）</summary>
+    internal static volatile bool DropPsdAsShape = true;
+
     /// <summary>サムネイルキャッシュの保存場所。空なら既定（%LOCALAPPDATA%\YMM4FastPsdShape\Cache）</summary>
     public string CacheDirectory { get => cacheDirectory; set => Set(ref cacheDirectory, value); }
     string cacheDirectory = "";
@@ -41,6 +50,7 @@ public sealed class ShapePluginSettings : SettingsBase<ShapePluginSettings>
         Apply(CacheDirectory);
         ShapeLog.Verbose = VerboseLog;
         Bake = BakeComposite;
+        DropPsdAsShape = DropPsdAsShapeItem;
     }
 
     public static void ApplyCacheDirectory()
@@ -57,6 +67,15 @@ public sealed class ShapePluginSettings : SettingsBase<ShapePluginSettings>
         public SettingsView(ShapePluginSettings settings)
         {
             var panel = new StackPanel { Margin = new Thickness(8) };
+
+            var drop = new CheckBox { Content = "PSD をタイムラインにドラッグ＆ドロップしたら、高速PSDの図形アイテムとして置く", IsChecked = settings.DropPsdAsShapeItem };
+            drop.Checked += (_, _) => settings.DropPsdAsShapeItem = true;
+            drop.Unchecked += (_, _) => settings.DropPsdAsShapeItem = false;
+            panel.Children.Add(drop);
+            panel.Children.Add(Note("オン: 画像アイテムではなく、図形の種類が「高速PSD」の図形アイテムとして置きます。長さや位置は「図形アイテムの既定値」に従います。PSD 以外のファイルはいつもどおりです。\n" +
+                                    "オフ: YMM4 の標準どおり、画像アイテムとして置きます。"));
+            panel.Children.Add(new Separator { Margin = new Thickness(0, 12, 0, 8) });
+
 
             var bake = new CheckBox { Content = "合成結果を1枚の画像にまとめる（おすすめ）", IsChecked = settings.BakeComposite };
             bake.Checked += (_, _) => settings.BakeComposite = true;

@@ -46,7 +46,8 @@ public sealed class CpuCompositor
         float[] src = op switch
         {
             LayerOp l => LayerCanvas(l.Layer),
-            GroupOp g => RenderChildren(g.Children),
+            GroupOp g => g.Mask == null ? RenderChildren(g.Children) : ApplyMask(RenderChildren(g.Children), g.Mask),
+            PassThroughMaskOp pm => RenderPassThroughMask(pm),
             ClipOp c => RenderClip(c),
             _ => throw new NotSupportedException(),
         };
@@ -58,6 +59,40 @@ public sealed class CpuCompositor
         var buf = new float[_w * _h * 4];
         foreach (var op in ops) Draw(buf, op, atop: false);
         return buf;
+    }
+
+    /// <summary>フォルダのマスクを掛ける（マスクの外は既定色）</summary>
+    float[] ApplyMask(float[] buf, PsdLayer maskLayer)
+    {
+        var bgra = _psd.DecodeBgra(maskLayer);
+        try
+        {
+            for (int y = 0; y < _h; y++)
+                for (int x = 0; x < _w; x++)
+                {
+                    float m = PsdFile.FolderMaskValue(maskLayer, bgra, x, y) / 255f;
+                    if (m >= 1f) continue;
+                    int i = (y * _w + x) * 4;
+                    for (int k = 0; k < 4; k++) buf[i + k] *= m;
+                }
+        }
+        finally { PsdFile.ReturnBuffer(bgra); }
+        return buf;
+    }
+
+    /// <summary>マスク付きの通過フォルダ：下の絵に中身を重ね、マスクで切り抜き、下に下の絵を敷く</summary>
+    float[] RenderPassThroughMask(PassThroughMaskOp pm)
+    {
+        var below = RenderChildren(pm.Backdrop);
+        var over = (float[])below.Clone();
+        foreach (var op in pm.Children) Draw(over, op, atop: false);
+        ApplyMask(over, pm.Mask);
+        for (int i = 0; i < over.Length; i += 4)
+        {
+            float f = 1f - over[i + 3];
+            for (int k = 0; k < 4; k++) over[i + k] += below[i + k] * f;
+        }
+        return over;
     }
 
     float[] RenderClip(ClipOp c)

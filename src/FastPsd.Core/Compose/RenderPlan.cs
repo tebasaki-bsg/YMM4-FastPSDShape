@@ -21,6 +21,21 @@ public sealed class GroupOp : RenderOp
 {
     public PsdLayer? Group;
     public List<RenderOp> Children = [];
+    /// <summary>フォルダのレイヤーマスク（v0.1.11）。中身を合成した画像をマスクで切り抜いてから重ねる。画像は Group の DecodeBgra（マスクの範囲）。</summary>
+    public PsdLayer? Mask;
+}
+
+/// <summary>
+/// マスクのある「通過」フォルダ（v0.1.11。PSDToolKit と同じ手順）。
+/// Backdrop（同じ並びでこのフォルダより下にあるもの）を描き、その上に Children を通常どおり重ねた画像を作り、
+/// それをマスクで切り抜いてから、下に Backdrop を敷く（マスクの外は下の絵のまま、内は中身を重ねた絵になる）。
+/// 結果は Backdrop を含むので、空の画像の上に描く。
+/// </summary>
+public sealed class PassThroughMaskOp : RenderOp
+{
+    public List<RenderOp> Backdrop = [];
+    public List<RenderOp> Children = [];
+    public required PsdLayer Mask;
 }
 
 /// <summary>
@@ -47,14 +62,17 @@ public sealed class RenderPlan
     public (int Left, int Top, int Width, int Height) ContentBounds(int canvasWidth, int canvasHeight)
     {
         int l = int.MaxValue, t = int.MaxValue, r = int.MinValue, b = int.MinValue;
+        int count = 0;
         foreach (var x in Layers)
         {
+            if (x.IsGroup) continue; // フォルダのマスクは描く範囲を広げない
+            count++;
             l = Math.Min(l, x.Left); t = Math.Min(t, x.Top);
             r = Math.Max(r, x.Right); b = Math.Max(b, x.Bottom);
         }
         l = Math.Max(l, 0); t = Math.Max(t, 0);
         r = Math.Min(r, canvasWidth); b = Math.Min(b, canvasHeight);
-        if (Layers.Count == 0 || r <= l || b <= t) return (0, 0, 0, 0);
+        if (count == 0 || r <= l || b <= t) return (0, 0, 0, 0);
         return (l, t, r - l, b - t);
     }
 }
@@ -122,11 +140,16 @@ public static class RenderPlanner
             {
                 var children = BuildSiblings(l.Children);
                 if (children.Count == 0) return null;
-                if (l.Mask != null && !l.Mask.Disabled) Warn("フォルダのレイヤーマスクは未対応です");
+                PsdLayer? mask = null;
+                if (l.HasFolderMask)
+                {
+                    mask = l;
+                    plan.Layers.Add(l); // マスクの画像も GPU に置く（ContentBounds では数えない）
+                }
                 if (l.Effects.Count > 0) Warn("レイヤー効果は未対応のため表示しません");
                 if (l.Knockout) Warn("ノックアウトは未対応です");
                 // フォルダの「塗り」は、効果がない場合は不透明度と同じように中身全体にかかる
-                return new GroupOp { Group = l, Children = children, Opacity = l.Opacity * l.FillOpacity, Blend = l.BlendMode };
+                return new GroupOp { Group = l, Children = children, Mask = mask, Opacity = l.Opacity * l.FillOpacity, Blend = l.BlendMode };
             }
             if (l.Adjustments.Count > 0)
             {
@@ -141,14 +164,15 @@ public static class RenderPlanner
             return new LayerOp { Layer = l, Opacity = l.Opacity * l.FillOpacity, Blend = l.BlendMode };
         }
 
-        plan.Ops = Flatten(BuildSiblings(psd.Roots));
+        plan.Ops = ResolvePassThroughMasks(Flatten(BuildSiblings(psd.Roots)));
         return plan;
     }
 
     /// <summary>
     /// 結果が変わらないフォルダを展開して、中間画像を減らす。
-    /// ・通過フォルダで不透明度100% → 中身をそのまま親に並べる
-    /// ・通常フォルダで不透明度100%、中身がすべて通常合成 → 同じ結果になるので展開
+    /// ・通過フォルダ → 中身をそのまま親に並べる。不透明度が 100% 未満なら、中の各要素の不透明度に掛ける
+    ///   （PSDToolKit と同じ。v0.1.10 までは「通常」のフォルダとして近似していた）。マスクがあれば残し、ResolvePassThroughMasks で扱う
+    /// ・通常フォルダで不透明度100%、マスクなし、中身がすべて通常合成 → 同じ結果になるので展開
     /// </summary>
     static List<RenderOp> Flatten(List<RenderOp> ops)
     {
@@ -159,19 +183,64 @@ public static class RenderPlanner
             {
                 case GroupOp g:
                     g.Children = Flatten(g.Children);
-                    bool full = g.Opacity >= 0.999f;
-                    if (full && (g.Blend == PsdBlendMode.PassThrough ||
-                                 (g.Blend == PsdBlendMode.Normal && g.Children.All(IsNormal))))
+                    if (g.Blend == PsdBlendMode.PassThrough)
+                    {
+                        if (g.Opacity < 0.999f)
+                        {
+                            foreach (var c in g.Children) c.Opacity *= g.Opacity;
+                            g.Opacity = 1f;
+                        }
+                        if (g.Mask == null) result.AddRange(g.Children);
+                        else result.Add(g);
+                        break;
+                    }
+                    if (g.Mask == null && g.Opacity >= 0.999f && g.Blend == PsdBlendMode.Normal && g.Children.All(IsNormal))
                         result.AddRange(g.Children);
                     else
-                    {
-                        if (g.Blend == PsdBlendMode.PassThrough) g.Blend = PsdBlendMode.Normal; // 不透明度付きの通過フォルダは近似
                         result.Add(g);
-                    }
                     break;
                 case ClipOp c:
-                    c.Base = Flatten([c.Base]) is [var single] ? single : new GroupOp { Children = Flatten([c.Base]) };
+                    var b = Flatten([c.Base]);
+                    c.Base = b is [var single] ? single : new GroupOp { Children = b };
+                    // クリッピングの土台・クリッピングされる側のマスク付き通過フォルダは、「通常」のフォルダとして扱う（近似）
+                    if (c.Base is GroupOp { Blend: PsdBlendMode.PassThrough } bg) bg.Blend = PsdBlendMode.Normal;
                     c.Clipped = Flatten(c.Clipped);
+                    foreach (var x in c.Clipped)
+                        if (x is GroupOp { Blend: PsdBlendMode.PassThrough } cg) cg.Blend = PsdBlendMode.Normal;
+                    result.Add(c);
+                    break;
+                default:
+                    result.Add(op);
+                    break;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// マスク付きの通過フォルダを PassThroughMaskOp にする（Flatten の後）。下にあるものは、同じ並び（親の「通常」フォルダか一番外）の
+    /// それより前の要素。PSDToolKit も、通過フォルダは親の作業中の画像をそのまま下地にしている。
+    /// </summary>
+    static List<RenderOp> ResolvePassThroughMasks(List<RenderOp> ops)
+    {
+        var result = new List<RenderOp>(ops.Count);
+        foreach (var op in ops)
+        {
+            switch (op)
+            {
+                case GroupOp { Blend: PsdBlendMode.PassThrough, Mask: { } mask } g:
+                    var pm = new PassThroughMaskOp { Backdrop = [.. result], Children = ResolvePassThroughMasks(g.Children), Mask = mask };
+                    result.Clear();
+                    result.Add(pm);
+                    break;
+                case GroupOp g:
+                    g.Children = ResolvePassThroughMasks(g.Children);
+                    result.Add(g);
+                    break;
+                case ClipOp c:
+                    if (c.Base is GroupOp bg) bg.Children = ResolvePassThroughMasks(bg.Children);
+                    foreach (var x in c.Clipped)
+                        if (x is GroupOp cg) cg.Children = ResolvePassThroughMasks(cg.Children);
                     result.Add(c);
                     break;
                 default:

@@ -67,6 +67,10 @@ internal static class D2DCompositor
                     break;
                 case GroupOp g:
                     img = BuildList(g.Children);
+                    if (g.Mask != null) img = Masked(img, g.Mask);
+                    break;
+                case PassThroughMaskOp pm:
+                    img = BuildPassThroughMask(pm);
                     break;
                 case ClipOp c:
                     img = BuildClip(c);
@@ -120,6 +124,64 @@ internal static class D2DCompositor
             dc.Target = null;
             masked.Close();
             return masked;
+        }
+
+        /// <summary>
+        /// フォルダのマスクで切り抜く（v0.1.11）。マスクの外の既定色が黒なら、マスクの範囲の外は消える（範囲で切ってから、マスクの形だけ残す）。
+        /// 白なら、反転したマスク（DecodeFolderMaskBgra）の形で消す（範囲の外は残る）。
+        /// </summary>
+        ID2D1Image Masked(ID2D1Image content, PsdLayer maskLayer)
+        {
+            var bmp = bitmaps[maskLayer];
+            var m = maskLayer.Mask!;
+            bool inverted = m.DefaultColor >= 128;
+            var cl = dc.CreateCommandList();
+            resources.Add(cl);
+            dc.Target = cl;
+            dc.BeginDraw();
+            dc.Clear(null);
+            if (!inverted) dc.PushAxisAlignedClip(new Vortice.RawRectF(m.Left, m.Top, m.Right, m.Bottom), AntialiasMode.Aliased);
+            dc.DrawImage(content, null, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+            dc.DrawImage(bmp, new Vector2(m.Left, m.Top), null, InterpolationMode.NearestNeighbor,
+                inverted ? CompositeMode.DestinationOut : CompositeMode.DestinationIn);
+            if (!inverted) dc.PopAxisAlignedClip();
+            dc.EndDraw();
+            dc.Target = null;
+            cl.Close();
+            return cl;
+        }
+
+        /// <summary>マスク付きの通過フォルダ（PassThroughMaskOp の説明を参照）</summary>
+        ID2D1Image BuildPassThroughMask(PassThroughMaskOp pm)
+        {
+            var backdrop = pm.Backdrop.Count > 0 ? BuildList(pm.Backdrop) : null;
+            var children = pm.Children.Select(Prepare).ToList();
+
+            var over = dc.CreateCommandList();
+            resources.Add(over);
+            dc.Target = over;
+            dc.BeginDraw();
+            dc.Clear(null);
+            if (backdrop != null) dc.DrawImage(backdrop, null, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+            foreach (var p in children) Draw(p, atop: false);
+            dc.EndDraw();
+            dc.Target = null;
+            over.Close();
+
+            var masked = Masked(over, pm.Mask);
+            if (backdrop == null) return masked;
+
+            var cl = dc.CreateCommandList();
+            resources.Add(cl);
+            dc.Target = cl;
+            dc.BeginDraw();
+            dc.Clear(null);
+            dc.DrawImage(masked, null, null, InterpolationMode.NearestNeighbor, CompositeMode.SourceOver);
+            dc.DrawImage(backdrop, null, null, InterpolationMode.NearestNeighbor, CompositeMode.DestinationOver);
+            dc.EndDraw();
+            dc.Target = null;
+            cl.Close();
+            return cl;
         }
 
         void Draw(Prepared p, bool atop)

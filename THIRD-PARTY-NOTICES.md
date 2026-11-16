@@ -12,6 +12,7 @@ YMM4 高速PSD図形プラグイン（YMM4FastPsdShape）の配布物（`YMM4Fas
 | ゆっくりMovieMaker4 本体およびプラグインAPI（YukkuriMovieMaker.Plugin ほか） | 饅頭遣い | YMM4 の利用規約に従います |
 | Vortice.Windows（Vortice.Direct2D1 ほか） | Amer Koleci and contributors | MIT License |
 | SharpGen.Runtime | SharpGenTools contributors | MIT License |
+| ReactiveProperty.Core | neuecc, xin9le, okazuki（runceel/ReactiveProperty） | MIT License |
 | .NET（WPF を含む） | Microsoft | MIT License |
 
 レイヤーツリーのフォルダのアイコンには、Windows に標準で入っているフォント「Segoe MDL2 Assets」を表示に使っています（フォントは同梱していません）。

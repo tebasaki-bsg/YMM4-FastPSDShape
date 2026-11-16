@@ -357,6 +357,44 @@ if (File.Exists(flipPath))
     Check(FV(soloX, "顔:flipx:flipy") && !FV(soloX, "服") && !FV(soloX, "口"), "中クリックのあと左右反転: 反転用の顔だけが出る");
 }
 
+// ---- フォルダのマスク・通過フォルダの不透明度（rules.psd と同じフォルダの mask.psd。make_mask_psd.py で作る。v0.2.1、高速PSD立ち絵 v0.1.11 と同じ） ----
+var maskPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(rulesPath)) ?? ".", "mask.psd");
+if (File.Exists(maskPath))
+{
+    using var mp = PsdFile.Open(maskPath);
+    Console.WriteLine("[フォルダのマスク・通過フォルダの不透明度]");
+    var ms = StateResolver.Resolve(new StateInput { Psd = mp, Rules = new RuleOptions(), Overrides = [] });
+    var mplan = RenderPlanner.Build(mp, ms);
+    Check(mplan.Warnings.Count == 0, $"未対応の注意が出ない（{string.Join("、", mplan.Warnings)}）");
+    Check(mplan.Layers.Count(l => l.IsGroup) == 2 && mp.ByKey["A"].HasFolderMask && mp.ByKey["B"].HasFolderMask && !mp.ByKey["C"].HasFolderMask,
+          "マスクのあるフォルダ2つの画像を GPU に置く");
+    Check(mp.ByKey["A"].ImageWidth == 8 && mp.ByKey["A"].ImageLeft == 0 && mp.ByKey["B"].ImageLeft == 28 && mp.ByKey["B"].ImageWidth == 4,
+          "フォルダの画像の範囲はマスクの範囲");
+    Check(mplan.ContentBounds(mp.Width, mp.Height) == (0, 0, 48, 8), "マスクは描く範囲に数えない");
+    Check(mplan.Ops.Count(o => o is PassThroughMaskOp) == 1, "マスク付きの通過フォルダは下の絵ごと1つの手順にする");
+
+    var mpx = CpuCompositor.ToStraightRgba(new CpuCompositor(mp).Render(mplan));
+    bool Near(int x, double r, double g, double b)
+    {
+        int i = x * 4; // 1行目で見る（どの行も同じ）
+        return Math.Abs(mpx[i] - r) <= 2 && Math.Abs(mpx[i + 1] - g) <= 2 && Math.Abs(mpx[i + 2] - b) <= 2 && mpx[i + 3] == 255;
+    }
+    double half = 128 / 255.0, gray = 128;
+    Check(Near(1, 255, 0, 0), "通常フォルダのマスク: 255 の所は中身のまま");
+    Check(Near(5, 255 * half + gray * (1 - half), gray * (1 - half), gray * (1 - half)), "通常フォルダのマスク: 128 の所は半分");
+    Check(Near(10, gray, gray, gray), "通常フォルダのマスク（外は黒）: 範囲の外は消える");
+    Check(Near(20, 0, 0, gray), "通過フォルダのマスク（外は白）: 範囲の外は中身（乗算）が効く");
+    Check(Near(30, gray, gray, gray), "通過フォルダのマスク: 0 の所は下の絵のまま");
+    double g1 = 255 * half + gray * (1 - half), rb1 = gray * (1 - half);
+    Check(Near(35, rb1, g1, rb1), "通過フォルダの不透明度: 中の要素に掛ける（緑）");
+    Check(Near(45, 255 * half + rb1 * (1 - half), 255 * half + g1 * (1 - half), 255 * half + rb1 * (1 - half)),
+          "通過フォルダの不透明度: 重なった所は、それぞれ薄くして重ねる（PSDToolKit と同じ）");
+
+    var hideA = new LayerOverrides(); hideA.Visible["A"] = false;
+    var hplan = RenderPlanner.Build(mp, StateResolver.Resolve(new StateInput { Psd = mp, Overrides = [hideA] }));
+    Check(!hplan.Layers.Contains(mp.ByKey["A"]), "非表示のフォルダのマスクは読み込まない");
+}
+
 // ---- 合成テスト：PSD内の統合画像（Photoshopの合成結果）と比べる ----
 if (args.Length > 1 && Directory.Exists(args[1]))
 {

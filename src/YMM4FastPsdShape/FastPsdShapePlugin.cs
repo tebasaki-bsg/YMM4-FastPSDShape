@@ -7,6 +7,9 @@ namespace YMM4FastPsdShape;
 [YukkuriMovieMaker.Plugin.PluginDetails(AuthorName = "Tebasaki")]
 public sealed class FastPsdShapePlugin : IShapePlugin
 {
+    /// <summary>PSD のドラッグ＆ドロップを受け取る準備（v0.2.0。YMM4 の起動時にプラグインが作られたときに1回だけ）</summary>
+    public FastPsdShapePlugin() => PsdDropHandler.Install();
+
     public string Name => "高速PSD";
 
     // AviUtl 向けの出力には対応しない

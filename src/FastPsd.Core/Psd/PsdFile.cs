@@ -28,6 +28,8 @@ public sealed class PsdLayer
 {
     // ---- ファイル上の情報 ----
     public int RecordIndex;
+    /// <summary>レイヤーID（'lyid'）。ないファイルでは null。標準のPSD立ち絵の設定ファイルの「i…」に使う</summary>
+    public uint? LayerId;
     public int Top, Left, Bottom, Right;
     public PsdChannel[] Channels = [];
     public string BlendKey = "norm";
@@ -64,6 +66,17 @@ public sealed class PsdLayer
     public float Opacity => OpacityByte / 255f;
     public float FillOpacity => FillOpacityByte / 255f;
     public bool HasPixels => !IsGroup && Area > 0 && Channels.Any(c => c.Id >= -1 && c.Length > 2);
+
+    /// <summary>
+    /// フォルダに有効なレイヤーマスクがあるか（v0.1.11。PSDToolKit と同じく、無効のマスクと大きさ 0 のマスクは使わない）。
+    /// </summary>
+    public bool HasFolderMask => IsGroup && Mask is { Disabled: false, Width: > 0, Height: > 0 } && Channels.Any(c => c.Id == -2 && c.Length > 2);
+
+    // GPU に置く画像の範囲。画像レイヤーはレイヤーの範囲、フォルダはマスクの範囲（フォルダのマスクを画像として置く）
+    public int ImageLeft => IsGroup ? Mask?.Left ?? 0 : Left;
+    public int ImageTop => IsGroup ? Mask?.Top ?? 0 : Top;
+    public int ImageWidth => IsGroup ? Mask?.Width ?? 0 : Width;
+    public int ImageHeight => IsGroup ? Mask?.Height ?? 0 : Height;
 
     public PsdBlendMode BlendMode => PsdBlendModes.FromKey(IsGroup ? (SectionBlendKey ?? BlendKey) : BlendKey);
 
@@ -290,6 +303,9 @@ public sealed class PsdFile : IDisposable
             case "iOpa":
                 l.FillOpacityByte = r.U8();
                 break;
+            case "lyid":
+                l.LayerId = r.U32();
+                break;
             case "knko":
                 l.Knockout = r.U8() != 0;
                 break;
@@ -361,6 +377,7 @@ public sealed class PsdFile : IDisposable
     /// </summary>
     public byte[] DecodeBgra(PsdLayer l)
     {
+        if (l.IsGroup) return DecodeFolderMaskBgra(l);
         if (!CanDecodeColor) throw new NotSupportedException($"{ColorModeName} {Depth}bit の画素の読み込みには対応していません");
         int bps = Depth == 16 ? 2 : 1;
         int w = l.Width, h = l.Height, n = w * h;
@@ -421,6 +438,51 @@ public sealed class PsdFile : IDisposable
     }
 
     public static void ReturnBuffer(byte[] buffer) => ArrayPool<byte>.Shared.Return(buffer);
+
+    /// <summary>
+    /// フォルダのレイヤーマスクを、マスクの範囲（ImageLeft など）の BGRA（乗算済みの白、透明度 = マスクの値）にする（v0.1.11）。
+    /// マスクの外の既定色が白（255）のときは、値を反転して返す（合成では「反転したマスクの形で消す」に使う。
+    /// マスクの外は消さずに残るため）。黒（0）のときはそのまま（合成では「マスクの形だけ残す」に使い、マスクの外は消える）。
+    /// </summary>
+    public byte[] DecodeFolderMaskBgra(PsdLayer l)
+    {
+        if (!l.HasFolderMask) throw new InvalidOperationException("有効なマスクのないフォルダです");
+        int bps = Depth == 16 ? 2 : 1;
+        var m = l.Mask!;
+        int w = m.Width, h = m.Height, n = w * h;
+        var c = l.Channels.First(x => x.Id == -2 && x.Length > 2);
+        var plane = ReadPlane(c, w, h, bps);
+        var outBuf = ArrayPool<byte>.Shared.Rent(n * 4);
+        try
+        {
+            bool invert = m.DefaultColor >= 128;
+            for (int i = 0, s = 0, o = 0; i < n; i++, s += bps, o += 4)
+            {
+                byte v = plane[s];
+                if (invert) v = (byte)(255 - v);
+                outBuf[o] = v; outBuf[o + 1] = v; outBuf[o + 2] = v; outBuf[o + 3] = v;
+            }
+            return outBuf;
+        }
+        catch
+        {
+            ArrayPool<byte>.Shared.Return(outBuf);
+            throw;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(plane);
+        }
+    }
+
+    /// <summary>フォルダのマスクの、キャンバスの位置 (x, y) での値（0〜255。マスクの外は既定色）。参照用の合成器で使う。</summary>
+    public static byte FolderMaskValue(PsdLayer l, byte[] maskBgra, int x, int y)
+    {
+        var m = l.Mask!;
+        if (x < m.Left || x >= m.Right || y < m.Top || y >= m.Bottom) return m.DefaultColor >= 128 ? (byte)255 : (byte)0;
+        byte v = maskBgra[((y - m.Top) * m.Width + (x - m.Left)) * 4 + 3];
+        return m.DefaultColor >= 128 ? (byte)(255 - v) : v;
+    }
 
     byte[] ReadPlane(PsdChannel c, int w, int h, int bps)
     {

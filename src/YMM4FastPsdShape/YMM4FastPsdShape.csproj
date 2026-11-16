@@ -13,7 +13,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>YMM4FastPsdShape</AssemblyName>
     <RootNamespace>YMM4FastPsdShape</RootNamespace>
-    <Version>0.1.4</Version>
+    <Version>0.2.1</Version>
     <Product>YMM4 高速PSD図形プラグイン</Product>
     <Description>ゆっくりMovieMaker4用の高速なPSD図形プラグイン</Description>
     <Authors>Tebasaki</Authors>
@@ -39,6 +39,9 @@
     <Reference Include="PresentationFramework"><HintPath>$(YMM4DirPath)PresentationFramework.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="WindowsBase"><HintPath>$(YMM4DirPath)WindowsBase.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="System.Xaml"><HintPath>$(YMM4DirPath)System.Xaml.dll</HintPath><Private>false</Private></Reference>
+    <!-- PSD のドラッグ＆ドロップ（v0.2.0）で、タイムライン・図形アイテム・アイテムの既定値を使う -->
+    <Reference Include="YukkuriMovieMaker"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="ReactiveProperty.Core"><HintPath>$(YMM4DirPath)ReactiveProperty.Core.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="YukkuriMovieMaker.Plugin"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Plugin.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="YukkuriMovieMaker.Controls"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Controls.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="YukkuriMovieMaker.Settings"><HintPath>$(YMM4DirPath)YukkuriMovieMaker.Settings.dll</HintPath><Private>false</Private></Reference>
