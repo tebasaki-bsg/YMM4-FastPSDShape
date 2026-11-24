@@ -492,12 +492,16 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
             if (setter?.Value is Thickness t) { pad = t; break; }
         }
         var style = new Style(typeof(ComboBoxItem), baseStyle);
-        style.Setters.Add(new Setter(PaddingProperty, new Thickness(PresetStarLeft, pad.Top, pad.Right, pad.Bottom)));
+        // 項目の高さは上下に 3 ずつ足して 6 高くする（v1.0.1。高速PSD立ち絵 v1.1.0 と同じ。星と名前は上下の中央のまま）
+        style.Setters.Add(new Setter(PaddingProperty, new Thickness(PresetStarLeft, pad.Top + PresetItemExtraHeight / 2, pad.Right, pad.Bottom + PresetItemExtraHeight / 2)));
         _presetBox.ItemContainerStyle = style;
     }
 
     /// <summary>項目の左端から星の枠まで（動く立ち絵の画面〔拡大率125%〕で、項目の左端から星の見える端まで 6px）</summary>
     const double PresetStarLeft = 4.5;
+
+    /// <summary>一覧の項目を、テーマの高さより高くする量（v1.0.1。閉じた欄の高さは変えない）</summary>
+    const double PresetItemExtraHeight = 6;
 
     /// <summary>
     /// プリセットの一覧の項目（閉じた欄にも同じものを使う）。
