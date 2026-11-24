@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
+using FastPsd.Core.Psd;
 using FastPsd.Core.Settings;
 
 namespace YMM4FastPsdShape.UI;
@@ -46,8 +47,10 @@ internal sealed class InputDialog : Window
 }
 
 /// <summary>
-/// 高速PSD立ち絵のプリセットを取り込むダイアログ。
-/// 設定セット（キャラ）を選び、取り込むプリセットにチェックを入れる。同じ名前があるときの扱いも選ぶ。
+/// プリセットを取り込むダイアログ。設定セット（キャラ）を選び、取り込むプリセットにチェックを入れる。同じ名前があるときの扱いも選ぶ。
+/// 設定セットの一覧には、高速PSD立ち絵（-ymmfastpsd.json）の設定セットのあとに「（標準PSD立ち絵）」を並べる（v1.1.0）。
+/// 「（標準PSD立ち絵）」を選ぶと、YMM4 標準のPSD立ち絵の設定（PSD名-ymm.json）のプリセットを並べる。
+/// PSD の横になければ「ファイルを選ぶ…」で選んでもらう。
 /// </summary>
 internal sealed class ImportDialog : Window
 {
@@ -56,23 +59,45 @@ internal sealed class ImportDialog : Window
         public required Preset Preset { get; init; }
         public bool IsChecked { get; set; } = true;
         public string Name => Preset.Name;
+        /// <summary>名前の横に薄く出す説明（標準から取り込むとき、選ぶと変わるルール）</summary>
+        public string Note { get; init; } = "";
     }
 
-    readonly SettingsFile _file;
+    public const string StandardSetName = "（標準PSD立ち絵）";
+
+    readonly SettingsFile? _file;
+    readonly int _tachieSetCount;
+    readonly string _psdPath;
+    readonly PsdFile _psd;
     readonly ComboBox _sets;
+    readonly TextBlock _note;
+    readonly StackPanel _standardRow;
+    readonly TextBlock _standardSource;
     readonly ObservableCollection<Row> _rows = [];
     readonly RadioButton _overwrite;
 
-    public SettingSet? SelectedSet => _sets.SelectedIndex >= 0 ? _file.SettingSets[_sets.SelectedIndex] : null;
+    /// <summary>標準の設定ファイル（読み込んだら入る）。読めなかったときは StandardError に理由</summary>
+    public StandardImport.Result? StandardResult { get; private set; }
+    public string? StandardPath { get; private set; }
+    string? _standardError;
+
+    /// <summary>「（標準PSD立ち絵）」を選んでいるか</summary>
+    public bool IsStandard => _sets.SelectedIndex == _tachieSetCount;
+    /// <summary>選んでいる高速PSD立ち絵の設定セット（「（標準PSD立ち絵）」のときは null）</summary>
+    public SettingSet? SelectedSet => _file != null && _sets.SelectedIndex >= 0 && _sets.SelectedIndex < _tachieSetCount ? _file.SettingSets[_sets.SelectedIndex] : null;
     public List<Preset> SelectedPresets => _rows.Where(r => r.IsChecked).Select(r => r.Preset).ToList();
     public bool Overwrite => _overwrite.IsChecked == true;
 
-    public ImportDialog(SettingsFile file)
+    /// <param name="tachie">高速PSD立ち絵の設定ファイル（なければ null）</param>
+    public ImportDialog(SettingsFile? tachie, string psdPath, PsdFile psd)
     {
-        _file = file;
-        Title = "高速PSD立ち絵のプリセットを取り込む";
-        Width = 420;
-        Height = 520;
+        _file = tachie;
+        _tachieSetCount = tachie?.SettingSets.Count ?? 0;
+        _psdPath = psdPath;
+        _psd = psd;
+        Title = "プリセットを取り込む";
+        Width = 440;
+        Height = 540;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ShowInTaskbar = false;
 
@@ -80,14 +105,22 @@ internal sealed class ImportDialog : Window
         var top = new StackPanel();
         top.Children.Add(new TextBlock { Text = "設定セット（キャラ）", Margin = new Thickness(0, 0, 0, 4) });
         _sets = new ComboBox();
-        foreach (var s in file.SettingSets) _sets.Items.Add(new TextBlock { Text = $"{s.Name}（プリセット {s.Presets.Count}件）" });
+        foreach (var s in tachie?.SettingSets ?? []) _sets.Items.Add(new TextBlock { Text = $"{s.Name}（プリセット {s.Presets.Count}件）" });
+        _sets.Items.Add(new TextBlock { Text = StandardSetName });
         _sets.SelectionChanged += (_, _) => FillRows();
         top.Children.Add(_sets);
-        top.Children.Add(new TextBlock
-        {
-            Text = "取り込むプリセットにチェックを入れてください。スライダー化したフォルダでの選択は、図形では「選んだ要素だけ表示」に置き換えます。",
-            TextWrapping = TextWrapping.Wrap, Opacity = 0.8, Margin = new Thickness(0, 8, 0, 4),
-        });
+
+        // 「（標準PSD立ち絵）」のときだけ出す行：取り込み元のファイル名と「ファイルを選ぶ…」
+        _standardRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0), Visibility = Visibility.Collapsed };
+        _standardSource = new TextBlock { VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 300 };
+        var pick = new Button { Content = "ファイルを選ぶ…", Padding = new Thickness(8, 1, 8, 1), Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        pick.Click += (_, _) => PickStandardFile();
+        _standardRow.Children.Add(_standardSource);
+        _standardRow.Children.Add(pick);
+        top.Children.Add(_standardRow);
+
+        _note = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.8, Margin = new Thickness(0, 8, 0, 4) };
+        top.Children.Add(_note);
         DockPanel.SetDock(top, Dock.Top);
         root.Children.Add(top);
 
@@ -113,15 +146,64 @@ internal sealed class ImportDialog : Window
         root.Children.Add(list);
         Content = root;
 
-        // プリセットのある最初の設定セットを選んでおく
-        int first = file.SettingSets.FindIndex(s => s.Presets.Count > 0);
-        _sets.SelectedIndex = Math.Max(0, first);
+        // PSD の横に標準の設定ファイルがあれば読んでおく（なければ「ファイルを選ぶ…」で選んでもらう）
+        var beside = StandardImport.PathFor(psdPath);
+        if (System.IO.File.Exists(beside)) LoadStandard(beside);
+
+        // プリセットのある最初の設定セットを選んでおく（立ち絵になければ「（標準PSD立ち絵）」）
+        int first = tachie?.SettingSets.FindIndex(s => s.Presets.Count > 0) ?? -1;
+        _sets.SelectedIndex = first >= 0 ? first : _tachieSetCount;
+    }
+
+    void LoadStandard(string path)
+    {
+        StandardPath = path;
+        try
+        {
+            StandardResult = ShapeStandardImport.Read(_psd, System.IO.File.ReadAllText(path));
+            _standardError = null;
+        }
+        catch (Exception ex)
+        {
+            StandardResult = null;
+            _standardError = ex.Message;
+        }
+    }
+
+    void PickStandardFile()
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "標準のPSD立ち絵の設定ファイルを選んでください",
+            InitialDirectory = System.IO.Path.GetDirectoryName(StandardPath ?? _psdPath) ?? "",
+            Filter = "標準のPSD立ち絵の設定 (*-ymm.json)|*-ymm.json|JSON ファイル (*.json)|*.json|すべてのファイル (*.*)|*.*",
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        LoadStandard(dlg.FileName);
+        FillRows();
     }
 
     void FillRows()
     {
         _rows.Clear();
-        foreach (var p in SelectedSet?.Presets ?? []) _rows.Add(new Row { Preset = p });
+        if (IsStandard)
+        {
+            _standardRow.Visibility = Visibility.Visible;
+            var name = StandardPath == null ? null : System.IO.Path.GetFileName(StandardPath);
+            _standardSource.Text = StandardPath == null
+                ? $"{System.IO.Path.GetFileName(StandardImport.PathFor(_psdPath))} が PSD と同じフォルダにありません。"
+                : _standardError != null ? $"{name} を読み込めませんでした（{_standardError}）"
+                : StandardResult!.Set.Presets.Count == 0 ? $"{name} にはプリセットがありません。"
+                : $"取り込み元: {name}（プリセット {StandardResult.Set.Presets.Count}件）";
+            _note.Text = "取り込むプリセットにチェックを入れてください。標準には「!」「*」ルールがないため、そのままでは標準と同じ見た目にならないプリセットは、選んだときにアイテムのルールをオフにします（名前の横に表示）。";
+            foreach (var p in StandardResult?.Set.Presets ?? []) _rows.Add(new Row { Preset = p, Note = ShapeStandardImport.RuleNote(p) });
+        }
+        else
+        {
+            _standardRow.Visibility = Visibility.Collapsed;
+            _note.Text = "取り込むプリセットにチェックを入れてください。スライダー化したフォルダでの選択は、図形では「選んだ要素だけ表示」に置き換えます。";
+            foreach (var p in SelectedSet?.Presets ?? []) _rows.Add(new Row { Preset = p });
+        }
     }
 
     void SetAll(bool value)
@@ -140,7 +222,10 @@ internal sealed class ImportDialog : Window
 
     static DataTemplate RowTemplate() => (DataTemplate)System.Windows.Markup.XamlReader.Parse("""
         <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
-          <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Content="{Binding Name}" VerticalAlignment="Center"/>
+          <StackPanel Orientation="Horizontal">
+            <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}" Content="{Binding Name}" VerticalAlignment="Center"/>
+            <TextBlock Text="{Binding Note}" Opacity="0.7" Margin="6,0,0,0" VerticalAlignment="Center"/>
+          </StackPanel>
         </DataTemplate>
         """);
 }

@@ -214,6 +214,49 @@ using (var psd = PsdFile.Open(rulesPath))
     TachiePresetImport.Merge(favFile, [new Preset { Name = "星" }], overwrite: true);
     Check(favFile.Presets[0].Favorite && favFile.Presets[0].ExclamationRule == null, "上書き: 取り込むほうにルールの指定がなければ消える（内容と一緒に置き換え）");
 
+    Console.WriteLine("[図形: 標準のPSD立ち絵から取り込み]");
+    {
+        // 高速PSD立ち絵の「標準から取り込み」のテストと同じ -ymm.json を作る（読み方は立ち絵と同じ StandardImport）
+        string Id(string key) { var l = psd.ByKey[key]; return l.LayerId is uint id ? $"i{id}" : $"n{l.RecordIndex}"; }
+        var baseVis = StateResolver.Resolve(new StateInput { Psd = psd, Rules = new RuleOptions { Asterisk = false, Exclamation = false } });
+        // プリセット: 保存状態から 目/*通常目 → 目/*ジト目 に変えたもの（全部の表示要素を並べる）
+        var shownKeys = psd.All.Where(l => baseVis.Visible[l.Index]).Select(l => l.Key).Where(k => k != "目/*通常目" && k != "目/*閉じ目").Append("目/*ジト目").ToList();
+        var presetLayers = string.Join(",", shownKeys.Select(k => $"\"{Id(k)}\""));
+        var stdJson = $$"""
+        {
+          "Presets": [
+            { "Name": "ジト目", "Layers": [{{presetLayers}}] },
+            { "Name": "ジト目", "Layers": [{{presetLayers}}, "n99999"] },
+            { "Name": "笑顔", "Layers": [{{presetLayers}}] }
+          ],
+          "EyeAnimations": [
+            { "Layers": ["{{Id("目/*通常目")}}", "{{Id("目/*閉じ目")}}"], "Offset": 0, "Interval": 0 }
+          ]
+        }
+        """;
+        var imp = ShapeStandardImport.Read(psd, stdJson);
+        var ps = imp.Set.Presets;
+        Check(ps.Count == 3 && ps[0].Name == "ジト目" && ps[1].Name == "ジト目 (2)", "プリセットを読む（設定ファイルの中で重なる名前は (2) を付ける）");
+        var pst = R(ov: [ps[0].Overrides], rules: new RuleOptions { Exclamation = false });
+        Check(V(pst, "目/*ジト目") && !V(pst, "目/*通常目") && !V(pst, "目/*閉じ目"), "PSD の保存状態との差に変換");
+        Check(ps[0].ExclamationRule == false, "「!」の要素を隠すプリセットは、選んだときに「!」ルールをオフにする指定を付ける");
+        Check(ShapeStandardImport.RuleNote(ps[0]) == "（選ぶと「!」ルールをオフ）" && ShapeStandardImport.RuleNote(new Preset { Name = "x" }) == "", "一覧に出すルールの説明");
+
+        // 図形の一覧に加える（「笑顔」はすでにある → 番号を付けて追加）。お気に入り・ルールの指定は立ち絵からの取り込みと同じ扱い
+        var file = new ShapePresetFile();
+        file.Presets.Add(new Preset { Name = "笑顔", Favorite = true });
+        var chosen = new List<Preset> { ps[1], ps[2] };
+        var names = TachiePresetImport.Merge(file, chosen, overwrite: false);
+        Check(names.SequenceEqual(["ジト目 (2)", "笑顔 (2)"]) && file.Presets.Count == 3 && file.Presets[1].ExclamationRule == false, "同じ名前は番号を付けて追加し、ルールの指定も持つ");
+        var summary = ShapeStandardImport.Summary(imp, chosen.Select((p, i) => (p.Name, names[i])).ToList());
+        Check(summary.StartsWith("2件のプリセットを取り込みました。") && summary.Contains("笑顔 → 笑顔 (2)"), "結果の説明: 件数と、名前を変えたもの");
+        Check(summary.Contains("プリセット「ジト目 (2)」: 見つからない要素 1件") && !summary.Contains("プリセット「ジト目」:"), "結果の説明: 見つからない要素は取り込んだプリセットの分だけ");
+        Check(summary.Contains("プリセット「笑顔 (2)」は「!」の要素") && !summary.Contains("プリセット「ジト目」は"), "結果の説明: ルールを変えるのは取り込んだプリセットの分だけ（図形の一覧での名前で）");
+        Check(!summary.Contains("口パク") && !summary.Contains("目パチ"), "結果の説明: 口パク・目パチのことは書かない（図形にはないので取り込まない）");
+        var names2 = TachiePresetImport.Merge(file, [ps[2]], overwrite: true);
+        Check(names2.SequenceEqual(["笑顔"]) && file.Presets[0].Favorite && file.Presets[0].ExclamationRule == false, "上書き: 図形側のお気に入りは残し、ルールの指定は取り込んだものにする");
+    }
+
     Console.WriteLine("[図形: お気に入り]");
     {
         var ff = new ShapePresetFile { Presets = [new Preset { Name = "A" }, new Preset { Name = "B" }, new Preset { Name = "C" }, new Preset { Name = "D" }] };

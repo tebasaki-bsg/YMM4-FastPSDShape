@@ -50,7 +50,7 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         buttons.Children.Add(SmallButton("保存", "現在の状態に名前を付けて、プリセットとして保存します（同じPSDを使う図形で共通）", SavePreset));
         buttons.Children.Add(SmallButton("名前変更", "選んでいるプリセットの名前を変えます", RenamePreset));
         buttons.Children.Add(SmallButton("削除", "選んでいるプリセットを削除します", DeletePreset));
-        buttons.Children.Add(SmallButton("立ち絵から取り込み", "高速PSD立ち絵で作ったプリセットを取り込みます（立ち絵側の設定は変更しません）", ImportPresets));
+        buttons.Children.Add(SmallButton("取り込み", "高速PSD立ち絵、または YMM4 標準のPSD立ち絵のプリセットを取り込みます（取り込み元の設定は変更しません）。取り込み元は、開いた画面の「設定セット」で選びます", ImportPresets));
         buttons.Children.Add(SmallButton("リセット", "このアイテムで変更した内容をすべて取り消し、PSDの状態に戻します", ResetOverrides));
         DockPanel.SetDock(buttons, Dock.Right);
         presetRow.Children.Add(buttons);
@@ -594,24 +594,38 @@ internal sealed class LayerTreeEditor : UserControl, IPropertyEditorControl
         Refresh();
     }
 
+    /// <summary>
+    /// プリセットの取り込み（v1.1.0。それまでの「立ち絵から取り込み」）。
+    /// 取り込み元は画面の設定セットの一覧で選ぶ：高速PSD立ち絵（-ymmfastpsd.json）の設定セットと「（標準PSD立ち絵）」（PSD名-ymm.json）。
+    /// どちらの取り込み元のファイルも読むだけ。
+    /// </summary>
     void ImportPresets()
     {
         if (_entry == null || PsdPath is not { } path) return;
-        var tachie = TachiePresetImport.ReadTachieFile(path);
-        if (tachie == null || tachie.SettingSets.All(s => s.Presets.Count == 0))
+        var owner = Window.GetWindow(this);
+        SettingsFile? tachie = null;
+        try { tachie = TachiePresetImport.ReadTachieFile(path); }
+        catch (Exception ex) { ShapeLog.Error($"高速PSD立ち絵の設定を読めませんでした（標準の取り込みだけ出します）: {SettingsFile.PathFor(path)}", ex); }
+        var dialog = new ImportDialog(tachie, path, _entry.Psd) { Owner = owner };
+        if (dialog.ShowDialog() != true || dialog.SelectedPresets.Count == 0) return;
+        List<string> names = [];
+        if (dialog.IsStandard && dialog.StandardResult is { } std)
         {
-            MessageBox.Show(Window.GetWindow(this),
-                $"このPSDには、高速PSD立ち絵のプリセットがありません。\n（{System.IO.Path.GetFileName(SettingsFile.PathFor(path))} が見つからないか、プリセットが保存されていません）", "高速PSD");
+            // 標準のPSD立ち絵：プリセットはすでに PSD の保存状態との差になっていて、ルールの指定も付いている
+            var chosen = dialog.SelectedPresets;
+            ShapePresetStore.Update(path, f => names = TachiePresetImport.Merge(f, chosen, dialog.Overwrite));
+            var summary = ShapeStandardImport.Summary(std, chosen.Select((p, i) => (p.Name, i < names.Count ? names[i] : p.Name)).ToList());
+            ShapeLog.Info($"標準から取り込み PSD={path} 取り込み元={dialog.StandardPath} 上書き={dialog.Overwrite}\n{summary}");
+            Refresh();
+            MessageBox.Show(owner, summary, "高速PSD");
             return;
         }
-        var dialog = new ImportDialog(tachie) { Owner = Window.GetWindow(this) };
-        if (dialog.ShowDialog() != true || dialog.SelectedSet is not { } set || dialog.SelectedPresets.Count == 0) return;
+        if (dialog.SelectedSet is not { } set) return;
         var converted = dialog.SelectedPresets.Select(p => TachiePresetImport.Convert(p, _entry.Psd, set.SliderGroups)).ToList();
-        List<string> names = [];
         ShapePresetStore.Update(path, f => names = TachiePresetImport.Merge(f, converted, dialog.Overwrite));
         ShapeLog.Info($"プリセットを取り込み 設定セット={set.Name} {names.Count}件 上書き={dialog.Overwrite}");
         Refresh();
-        MessageBox.Show(Window.GetWindow(this), $"{names.Count}件のプリセットを取り込みました。\n" + string.Join("\n", names.Take(15)) + (names.Count > 15 ? $"\nほか{names.Count - 15}件" : ""), "高速PSD");
+        MessageBox.Show(owner, $"{names.Count}件のプリセットを取り込みました。\n" + string.Join("\n", names.Take(15)) + (names.Count > 15 ? $"\nほか{names.Count - 15}件" : ""), "高速PSD");
     }
 
     // ------------------------------------------------------------------

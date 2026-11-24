@@ -233,3 +233,54 @@ public static class TachiePresetImport
         Favorite = p.Favorite, AsteriskRule = p.AsteriskRule, ExclamationRule = p.ExclamationRule,
     };
 }
+
+/// <summary>
+/// YMM4 標準のPSD立ち絵の設定（&lt;PSD名&gt;-ymm.json）のプリセットを図形に取り込む（v1.1.0）。
+/// 読み方は高速PSD立ち絵の「標準から取り込み」（<see cref="StandardImport"/>。立ち絵と同じソース）と同じ。
+/// 図形には口パク・目パチがないので、プリセットだけを使う（結果の説明にも書かない）。
+/// 「!」「*」ルールのままでは標準と同じ見た目にならないプリセットには、選んだときにアイテムのルールをオフにする指定が付いている。
+/// </summary>
+public static class ShapeStandardImport
+{
+    /// <summary>取り込み元のプリセット（設定ファイルの中で名前が重なるものは「名前 (2)」にしてある）</summary>
+    public static StandardImport.Result Read(PsdFile psd, string json) => StandardImport.Import(psd, json, "");
+
+    /// <summary>
+    /// 取り込んだ結果の説明（画面とログ用）。imported は取り込んだプリセットの（取り込み元での名前, 図形の一覧での名前）。
+    /// </summary>
+    public static string Summary(StandardImport.Result r, IReadOnlyList<(string Source, string Final)> imported)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"{imported.Count}件のプリセットを取り込みました。");
+        foreach (var (src, fin) in imported.Take(15)) sb.AppendLine(src == fin ? $"  ・{fin}" : $"  ・{src} → {fin}");
+        if (imported.Count > 15) sb.AppendLine($"  ほか {imported.Count - 15}件");
+        var chosen = imported.ToDictionary(x => x.Source, x => x.Final, StringComparer.Ordinal);
+
+        // 見つからなかった要素は、取り込んだプリセットの分だけ
+        var skipped = r.Skipped.Where(s => chosen.Keys.Any(k => s.StartsWith($"プリセット「{k}」", StringComparison.Ordinal))).ToList();
+        if (skipped.Count > 0)
+        {
+            sb.AppendLine($"PSD に見つからない要素がありました（その要素は飛ばしています）:");
+            foreach (var s in skipped.Take(15)) sb.AppendLine("  ・" + s);
+            if (skipped.Count > 15) sb.AppendLine($"  ほか {skipped.Count - 15}件");
+        }
+        foreach (var (p, els) in r.HidesExclamation)
+            if (chosen.TryGetValue(p, out var fin))
+                sb.AppendLine($"プリセット「{fin}」は「!」の要素（{string.Join("、", els.Take(3).Select(Last))}{(els.Count > 3 ? " など" : "")}）を隠しているので、選ぶとそのアイテムの「!」ルールをオフにします。");
+        foreach (var (p, folders) in r.MultiAsterisk)
+            if (chosen.TryGetValue(p, out var fin))
+                sb.AppendLine($"プリセット「{fin}」は同じフォルダの「*」の要素を2つ以上表示している（{string.Join("、", folders.Take(3))}）ので、選ぶとそのアイテムの「*」ルールをオフにします。");
+        return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>取り込み元のプリセットの名前の横に出す、選んだときに変わるルールの説明（なければ空）</summary>
+    public static string RuleNote(Preset p)
+    {
+        var parts = new List<string>();
+        if (p.ExclamationRule == false) parts.Add("「!」");
+        if (p.AsteriskRule == false) parts.Add("「*」");
+        return parts.Count == 0 ? "" : $"（選ぶと{string.Join("", parts)}ルールをオフ）";
+    }
+
+    static string Last(string key) => key[(key.LastIndexOf('/') + 1)..];
+}
